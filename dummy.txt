@@ -1,0 +1,92 @@
+Main, INFO: ==================================================
+Main, INFO: Created a new Experiment. Model Granite
+Main, INFO: ==================================================
+Main, INFO: >>>> Command line argument rate => 9.9
+Main, INFO: >>>> Command line argument dtpts => 22000
+Main, INFO: >>>> Command line argument batch_size => 256
+Main, INFO: >>>> Command line argument max_len => 1
+Main, INFO: >>>> Command line argument k => 10
+Main, INFO: >>>> Command line argument intervention => rank-reduction
+Main, INFO: >>>> Command line argument lname => fc_out
+Main, INFO: >>>> Command line argument lnum => 28
+Main, INFO: >>>> Command line argument model_path => /new_data/experiments/ap-8b-p10-rhel13-data-id-2/hf_format/samples_10597250
+Main, INFO: >>>> Command line argument home_dir => /mnt/data/iclr2024/fever/llama_results
+Main, INFO: >>>> Command line argument dataset_file => /mnt/data/counterfact
+Main, INFO: ==================================================
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): huggingface.co:443
+urllib3.connectionpool, DEBUG: https://huggingface.co:443 "GET /api/datasets/EleutherAI/fever HTTP/11" 200 3054
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): s3.amazonaws.com:443
+urllib3.connectionpool, DEBUG: https://s3.amazonaws.com:443 "HEAD /datasets.huggingface.co/datasets/datasets/EleutherAI/fever/EleutherAI/fever.py HTTP/11" 404 0
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): huggingface.co:443
+urllib3.connectionpool, DEBUG: https://huggingface.co:443 "HEAD /datasets/EleutherAI/fever/resolve/main/fever.py HTTP/11" 200 0
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): huggingface.co:443
+urllib3.connectionpool, DEBUG: https://huggingface.co:443 "GET /datasets/EleutherAI/fever/resolve/main/fever.py HTTP/11" 200 10310
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): huggingface.co:443
+urllib3.connectionpool, DEBUG: https://huggingface.co:443 "HEAD /datasets/EleutherAI/fever/resolve/main/dataset_infos.json HTTP/11" 404 0
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): huggingface.co:443
+urllib3.connectionpool, DEBUG: https://huggingface.co:443 "HEAD /datasets/EleutherAI/fever/resolve/main/README.md HTTP/11" 200 0
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): huggingface.co:443
+urllib3.connectionpool, DEBUG: https://huggingface.co:443 "GET /datasets/EleutherAI/fever/resolve/main/README.md HTTP/11" 200 11279
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): storage.googleapis.com:443
+urllib3.connectionpool, DEBUG: https://storage.googleapis.com:443 "HEAD /huggingface-nlp/cache/datasets/EleutherAI___fever/v1.0/1.0.0/dataset_info.json HTTP/11" 404 0
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): fever.ai:443
+urllib3.connectionpool, DEBUG: https://fever.ai:443 "HEAD /download/fever/train.jsonl HTTP/11" 200 0
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): fever.ai:443
+urllib3.connectionpool, DEBUG: https://fever.ai:443 "GET /download/fever/train.jsonl HTTP/11" 200 33024303
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): fever.ai:443
+urllib3.connectionpool, DEBUG: https://fever.ai:443 "HEAD /download/fever/shared_task_dev.jsonl HTTP/11" 200 0
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): fever.ai:443
+urllib3.connectionpool, DEBUG: https://fever.ai:443 "GET /download/fever/shared_task_dev.jsonl HTTP/11" 200 4349935
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): fever.ai:443
+urllib3.connectionpool, DEBUG: https://fever.ai:443 "HEAD /download/fever/paper_dev.jsonl HTTP/11" 200 0
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): fever.ai:443
+urllib3.connectionpool, DEBUG: https://fever.ai:443 "GET /download/fever/paper_dev.jsonl HTTP/11" 200 2168767
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): fever.ai:443
+urllib3.connectionpool, DEBUG: https://fever.ai:443 "HEAD /download/fever/paper_test.jsonl HTTP/11" 200 0
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): fever.ai:443
+urllib3.connectionpool, DEBUG: https://fever.ai:443 "GET /download/fever/paper_test.jsonl HTTP/11" 200 2181168
+fsspec.local, DEBUG: open file: /home/lab/.cache/huggingface/datasets/EleutherAI___fever/v1.0/1.0.0/aaf78d795e7eb335dcf2edfd8b2eae7b6030e171263fc0205db77ccedc5ffdf6.incomplete/fever-train-00000-00000-of-NNNNN.arrow
+fsspec.local, DEBUG: open file: /home/lab/.cache/huggingface/datasets/EleutherAI___fever/v1.0/1.0.0/aaf78d795e7eb335dcf2edfd8b2eae7b6030e171263fc0205db77ccedc5ffdf6.incomplete/fever-dev-00000-00000-of-NNNNN.arrow
+fsspec.local, DEBUG: open file: /home/lab/.cache/huggingface/datasets/EleutherAI___fever/v1.0/1.0.0/aaf78d795e7eb335dcf2edfd8b2eae7b6030e171263fc0205db77ccedc5ffdf6.incomplete/fever-paper_dev-00000-00000-of-NNNNN.arrow
+fsspec.local, DEBUG: open file: /home/lab/.cache/huggingface/datasets/EleutherAI___fever/v1.0/1.0.0/aaf78d795e7eb335dcf2edfd8b2eae7b6030e171263fc0205db77ccedc5ffdf6.incomplete/fever-paper_test-00000-00000-of-NNNNN.arrow
+fsspec.local, DEBUG: open file: /home/lab/.cache/huggingface/datasets/EleutherAI___fever/v1.0/1.0.0/aaf78d795e7eb335dcf2edfd8b2eae7b6030e171263fc0205db77ccedc5ffdf6.incomplete/dataset_info.json
+Main, INFO: Raw paper_dev set is 14475 and paper_test set is 14150.
+Main, INFO: Paper_dev and paper_test splits dont have a common context/claim.
+Main, INFO: After filtering paper_dev set is 6510 and paper_test set is 6576.
+Main, INFO: Read dataset of size 13086 of which the first 6510 examples are from the validation set and the remaining 6576 from the test split.
+Main, INFO: ==================================================
+Main, INFO: Created a new Experiment. Model Granite
+Main, INFO: ==================================================
+Main, INFO: >>>> Command line argument rate => 9.9
+Main, INFO: >>>> Command line argument dtpts => 22000
+Main, INFO: >>>> Command line argument batch_size => 256
+Main, INFO: >>>> Command line argument max_len => 1
+Main, INFO: >>>> Command line argument k => 10
+Main, INFO: >>>> Command line argument intervention => rank-reduction
+Main, INFO: >>>> Command line argument lname => fc_out
+Main, INFO: >>>> Command line argument lnum => 28
+Main, INFO: >>>> Command line argument model_path => /new_data/experiments/ap-8b-p10-rhel13-data-id-2/hf_format/samples_10597250
+Main, INFO: >>>> Command line argument home_dir => /mnt/data/iclr2024/fever/llama_results
+Main, INFO: >>>> Command line argument dataset_file => /mnt/data/counterfact
+Main, INFO: ==================================================
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): huggingface.co:443
+urllib3.connectionpool, DEBUG: https://huggingface.co:443 "GET /api/datasets/EleutherAI/fever HTTP/11" 200 3054
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): s3.amazonaws.com:443
+urllib3.connectionpool, DEBUG: https://s3.amazonaws.com:443 "HEAD /datasets.huggingface.co/datasets/datasets/EleutherAI/fever/EleutherAI/fever.py HTTP/11" 404 0
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): huggingface.co:443
+urllib3.connectionpool, DEBUG: https://huggingface.co:443 "HEAD /datasets/EleutherAI/fever/resolve/main/fever.py HTTP/11" 200 0
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): huggingface.co:443
+urllib3.connectionpool, DEBUG: https://huggingface.co:443 "HEAD /datasets/EleutherAI/fever/resolve/main/dataset_infos.json HTTP/11" 404 0
+urllib3.connectionpool, DEBUG: Starting new HTTPS connection (1): huggingface.co:443
+urllib3.connectionpool, DEBUG: https://huggingface.co:443 "HEAD /datasets/EleutherAI/fever/resolve/main/README.md HTTP/11" 200 0
+fsspec.local, DEBUG: open file: /home/lab/.cache/huggingface/datasets/EleutherAI___fever/v1.0/1.0.0/aaf78d795e7eb335dcf2edfd8b2eae7b6030e171263fc0205db77ccedc5ffdf6/dataset_info.json
+fsspec.local, DEBUG: open file: /home/lab/.cache/huggingface/datasets/EleutherAI___fever/v1.0/1.0.0/aaf78d795e7eb335dcf2edfd8b2eae7b6030e171263fc0205db77ccedc5ffdf6/dataset_info.json
+Main, INFO: Raw paper_dev set is 14475 and paper_test set is 14150.
+Main, INFO: Paper_dev and paper_test splits dont have a common context/claim.
+Main, INFO: After filtering paper_dev set is 6510 and paper_test set is 6576.
+Main, INFO: Read dataset of size 13086 of which the first 6510 examples are from the validation set and the remaining 6576 from the test split.
+Main, INFO: Editing a GraniteForCausalLM Model
+Main, INFO: Updating Layer: model.layers.28.mlp.down_proj.weight
+Main, INFO: Total number of parameters updated is 1
+Main, INFO: Edited and put model on cuda:0 in time 9 second
+Main, INFO: Experimented Completed.

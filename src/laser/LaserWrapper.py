@@ -1,9 +1,11 @@
 from transformers import LlamaForCausalLM
 from transformers import RobertaForMaskedLM
 from transformers import GPTJForCausalLM, DecisionTransformerModel
+from transformers import GraniteForCausalLM
 
 from laser.gptj_laser import GPTJLaser
 from laser.llama2_laser import LLAMA2Laser
+from laser.granite_laser import GraniteLaser
 from laser.mujoco_dt_laser import MujocoDTLaser
 from laser.phi1_5_laser import Phi15Laser
 from laser.roberta_laser import RobertaLaser
@@ -21,6 +23,17 @@ class LaserWrapper:
             logger.log("Editing a LlamaForCausalLM Model")
 
             return LLAMA2Laser.get_edited_model(model=model,
+                                                lname=lname,
+                                                lnum=lnum,
+                                                rate=rate,
+                                                intervention=intervention,
+                                                logger=logger,
+                                                in_place=in_place)
+                                        
+        elif type(model) == GraniteForCausalLM:
+            logger.log("Editing a GraniteForCausalLM Model")
+
+            return GraniteLaser.get_edited_model(model=model,
                                                 lname=lname,
                                                 lnum=lnum,
                                                 rate=rate,
