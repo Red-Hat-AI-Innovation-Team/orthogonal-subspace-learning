@@ -33,8 +33,19 @@ class GraniteExperiment:
 
         # Device for the experiment
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    def effective_rank(self, matrix, threshold=1e-5):
+        """
+        Compute the effective rank of a matrix using its singular values.
+        Singular values below the threshold are considered as zero.
+        """
+        u, s, v = torch.svd(matrix)
+        effective_rank = torch.sum(s > threshold).item()
+        return effective_rank
 
     def intervene(self, model, tokenizer, dataset, args, llm_name):
+
+        original_params = {name: param.clone().detach().cpu() for name, param in model.named_parameters()}
 
         time_edit_start = time.time()
         model_edit = LaserWrapper.get_edited_model(model=model,
@@ -47,6 +58,26 @@ class GraniteExperiment:
 
         model_edit.to(self.device)
         self.logger.log(f"Edited and put model on {model_edit.device} in time {elapsed_from_str(time_edit_start)}")
+
+        self.logger.log("Checking for parameter changes...")
+        for name, param in model_edit.named_parameters():
+            if name in original_params and not torch.equal(original_params[name], param.detach().cpu()):
+                
+                original_matrix = original_params[name]
+                new_matrix = param.detach().cpu()
+
+                # Compute effective ranks
+                original_rank = self.effective_rank(original_matrix)
+                new_rank = self.effective_rank(new_matrix)
+
+                # Print details
+                print(f"Layer changed: {name}")
+                print(f"Original Effective Rank: {original_rank}")
+                print(f"New Effective Rank: {new_rank}")
+                print("-" * 50)
+
+                print(f"Before change: {original_matrix}")
+                print(f"After change: {new_matrix}")
 
         save_path = "./modified_model"
         os.makedirs(save_path, exist_ok=True)
