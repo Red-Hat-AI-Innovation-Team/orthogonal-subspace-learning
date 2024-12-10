@@ -79,7 +79,7 @@ class GraniteExperiment:
                 print(f"Before change: {original_matrix}")
                 print(f"After change: {new_matrix}")
 
-        save_path = "./modified_model"
+        save_path = f"./{args.lname}-{args.lnum}-{args.rate}"
         os.makedirs(save_path, exist_ok=True)
         model_edit.save_pretrained(save_path)
         tokenizer.save_pretrained(save_path)
