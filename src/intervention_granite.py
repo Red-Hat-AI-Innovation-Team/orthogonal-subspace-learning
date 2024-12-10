@@ -103,7 +103,7 @@ if __name__ == '__main__':
                         choices=['k_proj', 'q_proj', 'v_proj', 'out_proj', 'fc_in', 'fc_up', 'fc_out', 'None',
                                  'dont', 'all', 'mlp', 'attn'],
                         help="provided which type of parameters to effect")
-    parser.add_argument('--lnum', type=int, default=28, help='Layers to edit', choices=list(range(-1, 32)))
+    parser.add_argument('--lnum', type=int, default=28, help='Layers to edit', choices=list(range(-1, 40)))
     parser.add_argument('--model_path',
                         type=str,
                         default="/new_data/experiments/ap-8b-p10-rhel13-data-id-2/hf_format/samples_10597250",
