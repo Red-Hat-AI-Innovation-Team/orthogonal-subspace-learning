@@ -134,17 +134,18 @@ if __name__ == '__main__':
     # Step 4: Create an experiment
     experiment = GraniteExperiment(save_dir=save_dir, logger=logger)
 
-    logger.log("=" * 50)
-    logger.log(f"Created a new Experiment. Model {llm_name}")
-    logger.log("=" * 50)
+    # logger.log("=" * 50)
+    # logger.log(f"Created a new Experiment. Model {llm_name}")
+    # logger.log("=" * 50)
 
-    for k, v in args.__dict__.items():
-        logger.log(f">>>> Command line argument {k} => {v}")
-    logger.log("=" * 50)
+    # for k, v in args.__dict__.items():
+    #     logger.log(f">>>> Command line argument {k} => {v}")
+    # logger.log("=" * 50)
 
     # Step 5: Read the dataset
-    dataset_util = FEVER()
-    dataset = dataset_util.get_dataset(logger)
+    # dataset_util = FEVER()
+    # dataset = dataset_util.get_dataset(logger)
+    dataset = None
 
     # Step 6: Run intervention
     experiment.intervene(model=model,
