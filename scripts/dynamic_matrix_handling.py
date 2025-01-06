@@ -1,6 +1,51 @@
+import os
 import torch
 from torch import nn
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, PreTrainedModel, GraniteForCausalLM
+
+class GraniteWithSVD(GraniteForCausalLM):
+    def __init__(self, config):
+        super().__init__(config)
+
+    def save_pretrained(self, save_directory, **kwargs):
+        # Save the model weights and SVD components
+        super().save_pretrained(save_directory, **kwargs)
+
+        # Save the SVD components manually
+        svd_data = {}
+        for layer_index, layer in enumerate(self.model.layers):
+            for matrix_name in ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']:
+                svd_attr = f"{matrix_name}_svd"
+                if hasattr(layer, svd_attr):
+                    svd_components = getattr(layer, svd_attr)
+                    svd_data[f"layer_{layer_index}_{matrix_name}"] = {
+                        "U": svd_components["U"].detach().cpu(),
+                        "S": svd_components["S"].detach().cpu(),
+                        "Vh": svd_components["Vh"].detach().cpu(),
+                    }
+
+        # torch.save(svd_data, os.path.join(save_directory, "svd_components.pt"))
+
+        torch.save(svd_data, "test_svd.pt")
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+        # Load the base model
+        model = super().from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
+
+        # Load the SVD components if available
+        svd_path = f"{pretrained_model_name_or_path}/svd_components.pt"
+        if os.path.exists(svd_path):
+            svd_data = torch.load(svd_path)
+            for key, components in svd_data.items():
+                layer_index, matrix_name = key.split("_")[1:3]
+                layer = model.model.layers[int(layer_index)]
+                setattr(layer, f"{matrix_name}_svd", {
+                    "U": components["U"].to(model.device),
+                    "S": components["S"].to(model.device),
+                    "Vh": components["Vh"].to(model.device),
+                })
+        return model
 
 # Function to decompose and store SVD components dynamically
 def decompose_and_store_svd(model, layer_number, matrix_name):
@@ -133,7 +178,7 @@ def validate_outputs(model, layer_number, matrix_name, input_text):
     return difference
 
 # Example Usage
-model = AutoModelForCausalLM.from_pretrained("/new_data/experiments/ap-8b-p10-rhel13-data-id-2/hf_format/samples_10597250")  # Replace with actual model path
+model = GraniteWithSVD.from_pretrained("/new_data/experiments/ap-8b-p10-rhel13-data-id-2/hf_format/samples_10597250")  # Replace with actual model path
 layer_number = 10  # Specify the layer number (0-based index)
 matrix_name = "k_proj"  # Specify the matrix name (e.g., 'q_proj', 'k_proj', etc.)
 input_text = "Let us go"  # Example input text
@@ -143,6 +188,22 @@ decompose_and_store_svd(model, layer_number, matrix_name)
 
 # Validate the outputs
 difference = validate_outputs(model, layer_number, matrix_name, input_text)
+
+if difference < 1e-5:
+    print("Outputs are effectively the same!")
+else:
+    print("Outputs differ. Reconstruction may need adjustment.")
+
+# Save the model after decomposing and storing SVD components
+save_path = "./modified_model/"  # Specify the save directory
+GraniteWithSVD.save_pretrained(model, save_path)
+print(f"Model with SVD components saved to {save_path}")
+
+# Reload the model with SVD components
+reloaded_model = GraniteWithSVD.from_pretrained(save_path)
+print("Model reloaded with SVD components.")
+
+difference = validate_outputs(reloaded_model, layer_number, matrix_name, input_text)
 
 if difference < 1e-5:
     print("Outputs are effectively the same!")
