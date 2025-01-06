@@ -19,14 +19,16 @@ excluded_combinations = {
     "fc_in-29-5.0", "fc_in-34-5.0", "fc_in-39-5.0", "fc_out-29-5.0", "fc_out-34-5.0", "fc_out-39-5.0",
     "fc_out-28-9.9", "v_proj-29-9.9", "v_proj-34-9.9", "v_proj-39-9.9",
     "fc_in-29-9.9", "fc_in-34-9.9", "fc_in-39-9.9", "fc_out-29-9.9", "fc_out-34-9.9", "fc_out-39-9.9",
-    "v_proj-29-1.0", "v_proj-34-1.0", "v_proj-39-1.0"
+    "v_proj-29-1.0", "v_proj-34-1.0", "v_proj-39-1.0", "v_proj-5-1.0", "v_proj-5-5.0"
 }
 
 # Iterate over all combinations of lname, lnum, and rate
 for lname in layer_names:
     for lnum in layer_numbers:
         for rate in rates:
-            if lname == 'k_proj' and lnum <= 5:
+            if lname in ['k_proj', 'q_proj']:
+                continue
+            if lname == 'v_proj' and lnum <= 4:
                 continue
             rate_str = f"{rate:.10f}".rstrip('0').rstrip('.')
 
