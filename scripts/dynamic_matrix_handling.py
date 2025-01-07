@@ -90,6 +90,20 @@ class CustomGraniteLayer(nn.Module):
             svd_components = getattr(self.original_layer, f"{self.matrix_name}_svd")
             U, S, Vh = svd_components["U"], svd_components["S"], svd_components["Vh"]
 
+            # Retrieve input tensor
+            inputs = args[0] if args else kwargs.get("hidden_states")
+            norms = []
+
+            # Compute the matrix-vector product for each singular vector
+            print(len(S))
+            for i in range(len(S)):
+                singular_matrix = torch.outer(U[:, i], Vh[i, :])
+                singular_output = torch.matmul(inputs.to(dtype=torch.float64), singular_matrix.T)
+                norm = torch.norm(singular_output, dim=-1).mean().item()
+                norms.append(norm)
+
+            # print(f"Layer Norms ({self.matrix_name}): {norms}")
+
             # Reconstruct the matrix
             reconstructed_matrix = sum(S[i] * torch.outer(U[:, i], Vh[i, :]) for i in range(len(S)))
 
@@ -178,7 +192,7 @@ def validate_outputs(model, layer_number, matrix_name, input_text):
     return difference
 
 # Example Usage
-model = GraniteWithSVD.from_pretrained("/new_data/experiments/ap-8b-p10-rhel13-data-id-2/hf_format/samples_10597250")  # Replace with actual model path
+model = AutoModelForCausalLM.from_pretrained("/new_data/experiments/ap-8b-p10-rhel13-data-id-2/hf_format/samples_10597250")  # Replace with actual model path
 layer_number = 10  # Specify the layer number (0-based index)
 matrix_name = "k_proj"  # Specify the matrix name (e.g., 'q_proj', 'k_proj', etc.)
 input_text = "Let us go"  # Example input text
@@ -194,18 +208,18 @@ if difference < 1e-5:
 else:
     print("Outputs differ. Reconstruction may need adjustment.")
 
-# Save the model after decomposing and storing SVD components
-save_path = "./modified_model/"  # Specify the save directory
-GraniteWithSVD.save_pretrained(model, save_path)
-print(f"Model with SVD components saved to {save_path}")
+# # Save the model after decomposing and storing SVD components
+# save_path = "./modified_model/"  # Specify the save directory
+# GraniteWithSVD.save_pretrained(model, save_path)
+# print(f"Model with SVD components saved to {save_path}")
 
-# Reload the model with SVD components
-reloaded_model = GraniteWithSVD.from_pretrained(save_path)
-print("Model reloaded with SVD components.")
+# # Reload the model with SVD components
+# reloaded_model = GraniteWithSVD.from_pretrained(save_path)
+# print("Model reloaded with SVD components.")
 
-difference = validate_outputs(reloaded_model, layer_number, matrix_name, input_text)
+# difference = validate_outputs(reloaded_model, layer_number, matrix_name, input_text)
 
-if difference < 1e-5:
-    print("Outputs are effectively the same!")
-else:
-    print("Outputs differ. Reconstruction may need adjustment.")
+# if difference < 1e-5:
+#     print("Outputs are effectively the same!")
+# else:
+#     print("Outputs differ. Reconstruction may need adjustment.")
