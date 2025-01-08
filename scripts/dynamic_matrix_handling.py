@@ -115,6 +115,8 @@ class CustomGraniteLayer(nn.Module):
             inputs = args[0] if args else kwargs.get("hidden_states")
             norms = []
 
+            print(inputs.size())
+
             # Compute the matrix-vector product for each singular vector
             for i in range(len(S)):
                 singular_matrix = torch.outer(U[:, i], Vh[i, :])
@@ -123,7 +125,7 @@ class CustomGraniteLayer(nn.Module):
                 norms.append(norm)
                 
             with open("norm_logs.jsonl", "a") as f:
-                f.write(json.dumps(norms))
+                f.write(json.dumps(norms) + "\n")
 
             # Reconstruct the matrix
             reconstructed_matrix = sum(S[i] * torch.outer(U[:, i], Vh[i, :]) for i in range(len(S)))
@@ -221,12 +223,14 @@ input_text = "Let us go"  # Example input text
 # Decompose and store the SVD components
 decompose_and_store_svd(model, layer_number, matrix_name)
 
+replace_layer_with_custom(model, layer_number, matrix_name)
+
 # Process the dataset through the model
 model.eval()
 with torch.no_grad():
     for batch in data_loader:
         outputs = model(**batch, use_cache=False)
-        break
+        print('Done!')
 
 # # Validate the outputs
 # difference = validate_outputs(model, layer_number, matrix_name, input_text)
