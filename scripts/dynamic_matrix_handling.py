@@ -1,6 +1,7 @@
-import os
+import os, json
 import torch
 from torch import nn
+from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, AutoModelForCausalLM, PreTrainedModel, GraniteForCausalLM
 
 class GraniteWithSVD(GraniteForCausalLM):
@@ -46,6 +47,26 @@ class GraniteWithSVD(GraniteForCausalLM):
                     "Vh": components["Vh"].to(model.device),
                 })
         return model
+    
+# Load data
+with open("/dev/shm/orthogonal-subspace/training/data.jsonl", "r") as f:
+    dataset = [json.loads(line) for line in f]
+
+tokenizer = AutoTokenizer.from_pretrained("/new_data/experiments/ap-8b-p10-rhel13-data-id-2/hf_format/samples_10597250")
+
+# Create DataLoader
+def collate_fn(batch):
+    input_ids = [item["input_ids"] for item in batch]
+    max_len = max(len(ids) for ids in input_ids)
+    padded_input_ids = [ids + [tokenizer.pad_token_id] * (max_len - len(ids)) for ids in input_ids]
+    labels = [item["labels"] for item in batch]
+    padded_labels = [lbl + [-100] * (max_len - len(lbl)) for lbl in labels]
+    return {
+        "input_ids": torch.tensor(padded_input_ids),
+        "labels": torch.tensor(padded_labels),
+    }
+
+data_loader = DataLoader(dataset, batch_size=8, collate_fn=collate_fn)
 
 # Function to decompose and store SVD components dynamically
 def decompose_and_store_svd(model, layer_number, matrix_name):
@@ -95,14 +116,14 @@ class CustomGraniteLayer(nn.Module):
             norms = []
 
             # Compute the matrix-vector product for each singular vector
-            print(len(S))
             for i in range(len(S)):
                 singular_matrix = torch.outer(U[:, i], Vh[i, :])
                 singular_output = torch.matmul(inputs.to(dtype=torch.float64), singular_matrix.T)
                 norm = torch.norm(singular_output, dim=-1).mean().item()
                 norms.append(norm)
-
-            # print(f"Layer Norms ({self.matrix_name}): {norms}")
+                
+            with open("norm_logs.jsonl", "a") as f:
+                f.write(json.dumps(norms))
 
             # Reconstruct the matrix
             reconstructed_matrix = sum(S[i] * torch.outer(U[:, i], Vh[i, :]) for i in range(len(S)))
@@ -200,13 +221,20 @@ input_text = "Let us go"  # Example input text
 # Decompose and store the SVD components
 decompose_and_store_svd(model, layer_number, matrix_name)
 
-# Validate the outputs
-difference = validate_outputs(model, layer_number, matrix_name, input_text)
+# Process the dataset through the model
+model.eval()
+with torch.no_grad():
+    for batch in data_loader:
+        outputs = model(**batch, use_cache=False)
+        break
 
-if difference < 1e-5:
-    print("Outputs are effectively the same!")
-else:
-    print("Outputs differ. Reconstruction may need adjustment.")
+# # Validate the outputs
+# difference = validate_outputs(model, layer_number, matrix_name, input_text)
+
+# if difference < 1e-5:
+#     print("Outputs are effectively the same!")
+# else:
+#     print("Outputs differ. Reconstruction may need adjustment.")
 
 # # Save the model after decomposing and storing SVD components
 # save_path = "./modified_model/"  # Specify the save directory
