@@ -216,8 +216,8 @@ def validate_outputs(model, layer_number, matrix_name, input_text):
 
 # Example Usage
 model = AutoModelForCausalLM.from_pretrained("/new_data/experiments/ap-8b-p10-rhel13-data-id-2/hf_format/samples_10597250")  # Replace with actual model path
-layer_number = 10  # Specify the layer number (0-based index)
-matrix_name = "k_proj"  # Specify the matrix name (e.g., 'q_proj', 'k_proj', etc.)
+layer_number = 34  # Specify the layer number (0-based index)
+matrix_name = "down_proj"  # Specify the matrix name (e.g., 'q_proj', 'k_proj', etc.)
 input_text = "Let us go"  # Example input text
 
 # Decompose and store the SVD components
