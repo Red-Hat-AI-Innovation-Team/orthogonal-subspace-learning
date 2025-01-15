@@ -120,7 +120,7 @@ class CustomGraniteLayer(nn.Module):
             # Compute the matrix-vector product for each singular vector
             for i in range(len(S)):
                 singular_matrix = torch.outer(U[:, i], Vh[i, :])
-                singular_output = torch.matmul(inputs.to(dtype=torch.float64), singular_matrix.T)
+                singular_output = torch.matmul(inputs.to(dtype=torch.float64), singular_matrix)
                 norm = torch.norm(singular_output, dim=-1).mean().item()
                 norms.append(norm)
                 
