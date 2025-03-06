@@ -734,7 +734,7 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
         label_mapping = {0: "True", 1: "False"}
     elif fine_tune_dataset.lower() == "rte":
         label_mapping = {0: "entailment", 1: "contradiction"}
-    elif fine_tune_dataset.lower() == "sst2":
+    elif fine_tune_dataset.lower() == "sst-2":
         label_mapping = {0: "Bad", 1: "Good"}
     elif fine_tune_dataset.lower() == "wic":
         label_mapping = {0: "True", 1: "False"}
