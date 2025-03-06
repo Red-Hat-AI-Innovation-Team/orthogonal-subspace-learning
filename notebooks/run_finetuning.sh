@@ -15,9 +15,9 @@ for i in "${!datasets[@]}"; do
     fi
     output_model_name="t5_svd_${fine_tune_dataset,,}.pt"
 
-    echo "Running fine-tuning on ${fine_tune_dataset} (starting from ${source_dataset}) with scale factor ${scale_factor}"
+    printf "Running fine-tuning on %s (starting from %s) with scale factor %.2f\n" "$fine_tune_dataset" "$source_dataset" "$scale_factor"
 
-    python fine_tune_svd.py \
+    python finetune_svd.py \
         --source_svd_dataset "$source_dataset" \
         --fine_tune_dataset "$fine_tune_dataset" \
         --starting_checkpoint "$starting_checkpoint" \
@@ -25,5 +25,5 @@ for i in "${!datasets[@]}"; do
         --scale_factor "$scale_factor"
 
     sleep 5  # Short delay to prevent excessive GPU resource allocation
-    scale_factor=$(echo "$scale_factor + 0.07" | bc)  # Increment scale factor
+    scale_factor=$(python -c "print(${scale_factor} + 0.07)")   # Increment scale factor
 done
