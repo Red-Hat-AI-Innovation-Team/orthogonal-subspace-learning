@@ -810,7 +810,7 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
     test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False,
                              collate_fn=lambda batch: collate_fn_fn(batch, tokenizer))
 
-    optimizer = optim.AdamW(model.parameters(), lr=5e-5)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-5)
     num_epochs = 1  # adjust as needed
 
     model.train()
