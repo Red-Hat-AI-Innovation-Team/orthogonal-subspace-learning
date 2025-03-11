@@ -293,7 +293,7 @@ def load_model():
     tokenizer = LlamaTokenizer.from_pretrained(model_name)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.pad_token_id = tokenizer.eos_token_id
-    model = LlamaForCausalLM.from_pretrained(model_name, quantization_config=bnb_config, device_map="cpu", low_cpu_mem_usage=True)
+    model = LlamaForCausalLM.from_pretrained(model_name, quantization_config=bnb_config, device_map=None, low_cpu_mem_usage=True)
     return model, tokenizer
 
 # Training function
