@@ -76,7 +76,7 @@ def main():
     fp16=False,
     max_grad_norm=1.0,
     learning_rate=2e-5,
-    num_train_epochs=3,
+    num_train_epochs=1,
     logging_steps=10,
     evaluation_strategy="epoch",  # Evaluate after every epoch
     save_steps=100,
