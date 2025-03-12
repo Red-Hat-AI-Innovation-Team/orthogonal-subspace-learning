@@ -234,15 +234,156 @@
 #     test_accuracy = evaluate(model1, tokenizer, test_loader, dataset_name="Test")
 
 
+# import torch
+# import torch.nn as nn
+# import torch.optim as optim
+# from torch.utils.data import DataLoader, Dataset
+# from transformers import LlamaForCausalLM, LlamaTokenizer, BitsAndBytesConfig
+# from accelerate import Accelerator
+# from tqdm import tqdm
+# import json
+# import os
+# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+# # Define device
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# # Configure quantization
+# bnb_config = BitsAndBytesConfig(
+#     load_in_4bit=True,
+#     bnb_4bit_compute_dtype=torch.bfloat16,
+#     bnb_4bit_use_double_quant=True,
+# )
+
+# # Define Dataset
+# class DBpediaDataset(Dataset):
+#     def __init__(self, json_file, tokenizer):
+#         self.tokenizer = tokenizer
+#         with open(json_file, "r", encoding="utf-8") as f:
+#             self.dataset = json.load(f)
+
+#     def __len__(self):
+#         return len(self.dataset)
+
+#     def __getitem__(self, idx):
+#         sample = self.dataset[idx]
+#         input_text = (
+#             "Classify the following text into one of these categories: "
+#             "[Company, Educational Institution, Artist, Athlete, Office Holder, Mean of Transportation, "
+#             "Building, Natural Place, Village, Animal, Plant, Album, Film, Written Work].\n\n"
+#             "Text: " + sample["sentence"] + "\nAnswer:"
+#         )
+#         target_text = sample["label"]
+#         return input_text, target_text
+
+# # Collate function
+# def collate_fn(batch, tokenizer, max_length=512):
+#     inputs, targets = zip(*batch)
+#     formatted_texts = [inp + " " + tgt for inp, tgt in zip(inputs, targets)]
+#     encodings = tokenizer(formatted_texts, padding=True, truncation=True, max_length=max_length, return_tensors="pt")
+#     encodings["input_ids"] = encodings["input_ids"]
+#     encodings["attention_mask"] = encodings["attention_mask"]
+#     encodings["labels"] = encodings["input_ids"].clone()
+
+#     return encodings
+
+# # Load model and tokenizer
+# def load_model():
+#     model_name = "baffo32/decapoda-research-llama-7B-hf"
+#     tokenizer = LlamaTokenizer.from_pretrained(model_name)
+#     tokenizer.pad_token = tokenizer.eos_token
+#     tokenizer.pad_token_id = tokenizer.eos_token_id
+#     model = LlamaForCausalLM.from_pretrained(model_name, device_map="auto", quantization_config=bnb_config)
+#     return model, tokenizer
+
+# # Training function
+# def train_model(model, tokenizer, train_loader, accelerator):
+#     optimizer = optim.AdamW(model.parameters(), lr=5e-5)
+#     model.train()
+#     for epoch in range(1):
+#         total_loss = 0.0
+#         progress_bar = tqdm(train_loader, desc=f"Training", unit="batch")
+#         for batch in progress_bar:
+#             # Ensure batch tensors are on the same device as the model
+#             outputs = model(**batch)
+#             loss = outputs.loss
+#             optimizer.zero_grad()
+#             # Use accelerator for backward
+#             accelerator.backward(loss)
+#             optimizer.step()
+#             total_loss += loss.item()
+#             progress_bar.set_postfix(loss=loss.item())
+#         accelerator.print(f"Epoch finished - Avg Loss: {total_loss / len(train_loader):.4f}")
+
+# def evaluate(model, tokenizer, data_loader, accelerator):
+#     model.eval()
+#     correct, total = 0, 0
+#     # Same idea: the model/batch are already on GPU thanks to accelerate
+#     with torch.no_grad():
+#         for batch in tqdm(data_loader, desc="Evaluating", unit="batch"):
+#             outputs = model(**batch)
+#             # shape = (batch_size, sequence_length, vocab_size)
+#             logits = outputs.logits
+#             predictions = torch.argmax(logits, dim=-1)
+            
+#             # Convert back to text
+#             predictions_texts = tokenizer.batch_decode(predictions, skip_special_tokens=True)
+#             targets_texts = tokenizer.batch_decode(batch["labels"], skip_special_tokens=True)
+            
+#             for pred_str, tgt_str in zip(predictions_texts, targets_texts):
+#                 # Simple string match
+#                 if pred_str.strip().lower() == tgt_str.strip().lower():
+#                     correct += 1
+#                 total += 1
+
+#     accuracy = 100.0 * correct / total
+#     accelerator.print(f"Accuracy: {accuracy:.2f}%")
+
+# # Main execution
+# if __name__ == "__main__":
+#     train_path = "/workspace/O-LoRA/CL_Benchmark/TC/dbpedia/train.json"
+#     test_path = "/workspace/O-LoRA/CL_Benchmark/TC/dbpedia/test.json"
+
+#     # Initialize Accelerator
+#     accelerator = Accelerator()
+    
+#     model, tokenizer = load_model()
+#     model = model.to(accelerator.device)
+
+#     train_dataset = DBpediaDataset(train_path, tokenizer)
+#     test_dataset = DBpediaDataset(test_path, tokenizer)
+    
+#     train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True, collate_fn=lambda b: collate_fn(b, tokenizer))
+#     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, collate_fn=lambda b: collate_fn(b, tokenizer))
+
+#     # Create optimizer
+#     optimizer = optim.AdamW(model.parameters(), lr=5e-5)
+
+#     # Prepare everything for Accelerate
+#     model, optimizer, train_loader, test_loader = accelerator.prepare(
+#         model, optimizer, train_loader, test_loader
+#     )
+
+#     # Training
+#     train_model(model, optimizer, train_loader, accelerator)
+
+#     # Evaluation
+#     evaluate(model, tokenizer, test_loader, accelerator)
+
+
+
+
+
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 from transformers import LlamaForCausalLM, LlamaTokenizer, BitsAndBytesConfig
-from accelerate import Accelerator
 from tqdm import tqdm
 import json
 import os
+
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 # Define device
@@ -269,8 +410,9 @@ class DBpediaDataset(Dataset):
         sample = self.dataset[idx]
         input_text = (
             "Classify the following text into one of these categories: "
-            "[Company, Educational Institution, Artist, Athlete, Office Holder, Mean of Transportation, "
-            "Building, Natural Place, Village, Animal, Plant, Album, Film, Written Work].\n\n"
+            "[Company, Educational Institution, Artist, Athlete, Office Holder, "
+            "Mean of Transportation, Building, Natural Place, Village, Animal, "
+            "Plant, Album, Film, Written Work].\n\n"
             "Text: " + sample["sentence"] + "\nAnswer:"
         )
         target_text = sample["label"]
@@ -280,11 +422,9 @@ class DBpediaDataset(Dataset):
 def collate_fn(batch, tokenizer, max_length=512):
     inputs, targets = zip(*batch)
     formatted_texts = [inp + " " + tgt for inp, tgt in zip(inputs, targets)]
-    encodings = tokenizer(formatted_texts, padding=True, truncation=True, max_length=max_length, return_tensors="pt")
-    encodings["input_ids"] = encodings["input_ids"]
-    encodings["attention_mask"] = encodings["attention_mask"]
+    encodings = tokenizer(formatted_texts, padding=True, truncation=True,
+                          max_length=max_length, return_tensors="pt")
     encodings["labels"] = encodings["input_ids"].clone()
-
     return encodings
 
 # Load model and tokenizer
@@ -293,77 +433,82 @@ def load_model():
     tokenizer = LlamaTokenizer.from_pretrained(model_name)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.pad_token_id = tokenizer.eos_token_id
-    model = LlamaForCausalLM.from_pretrained(model_name, quantization_config=bnb_config, device_map=None, low_cpu_mem_usage=True)
+
+    # Model-parallel: let HF shard across GPUs automatically
+    model = LlamaForCausalLM.from_pretrained(
+        model_name,
+        device_map="auto",                # <--- Automatic layer sharding
+        quantization_config=bnb_config
+    )
     return model, tokenizer
 
-# Training function
-def train_model(model, tokenizer, train_loader, accelerator):
+# Training function (no accelerate)
+def train_model(model, tokenizer, train_loader):
     optimizer = optim.AdamW(model.parameters(), lr=5e-5)
     model.train()
     for epoch in range(1):
         total_loss = 0.0
         progress_bar = tqdm(train_loader, desc=f"Training", unit="batch")
         for batch in progress_bar:
-            # Ensure batch tensors are on the same device as the model
+            # Move batch to model's device (model parallel means param device can vary)
+            # but typically "auto" places them among GPUs. A simple approach is to send to the first param's device:
+            first_param_device = next(model.parameters()).device
+            for key in batch:
+                batch[key] = batch[key].to(first_param_device)
+
             outputs = model(**batch)
             loss = outputs.loss
             optimizer.zero_grad()
-            # Use accelerator for backward
-            accelerator.backward(loss)
+            loss.backward()                # <--- replaced accelerator.backward(loss)
             optimizer.step()
+
             total_loss += loss.item()
             progress_bar.set_postfix(loss=loss.item())
-        accelerator.print(f"Epoch finished - Avg Loss: {total_loss / len(train_loader):.4f}")
 
-def evaluate(model, tokenizer, data_loader, accelerator):
+        print(f"Epoch finished - Avg Loss: {total_loss / len(train_loader):.4f}")
+
+# Evaluation function (no accelerate)
+def evaluate(model, tokenizer, data_loader):
     model.eval()
     correct, total = 0, 0
-    # Same idea: the model/batch are already on GPU thanks to accelerate
     with torch.no_grad():
         for batch in tqdm(data_loader, desc="Evaluating", unit="batch"):
+            # Move batch to same device as model
+            first_param_device = next(model.parameters()).device
+            for key in batch:
+                batch[key] = batch[key].to(first_param_device)
+
             outputs = model(**batch)
-            # shape = (batch_size, sequence_length, vocab_size)
             logits = outputs.logits
             predictions = torch.argmax(logits, dim=-1)
-            
+
             # Convert back to text
             predictions_texts = tokenizer.batch_decode(predictions, skip_special_tokens=True)
             targets_texts = tokenizer.batch_decode(batch["labels"], skip_special_tokens=True)
-            
+
             for pred_str, tgt_str in zip(predictions_texts, targets_texts):
-                # Simple string match
                 if pred_str.strip().lower() == tgt_str.strip().lower():
                     correct += 1
                 total += 1
 
-    accuracy = 100.0 * correct / total
-    accelerator.print(f"Accuracy: {accuracy:.2f}%")
+    print(f"Accuracy: {100.0 * correct / total:.2f}%")
 
-# Main execution
+# Main
 if __name__ == "__main__":
     train_path = "/workspace/O-LoRA/CL_Benchmark/TC/dbpedia/train.json"
     test_path = "/workspace/O-LoRA/CL_Benchmark/TC/dbpedia/test.json"
 
-    # Initialize Accelerator
-    accelerator = Accelerator()
-    
     model, tokenizer = load_model()
+
     train_dataset = DBpediaDataset(train_path, tokenizer)
     test_dataset = DBpediaDataset(test_path, tokenizer)
-    
-    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True, collate_fn=lambda b: collate_fn(b, tokenizer))
-    test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False, collate_fn=lambda b: collate_fn(b, tokenizer))
 
-    # Create optimizer
-    optimizer = optim.AdamW(model.parameters(), lr=5e-5)
+    train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True,
+                              collate_fn=lambda b: collate_fn(b, tokenizer))
+    test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False,
+                             collate_fn=lambda b: collate_fn(b, tokenizer))
 
-    # Prepare everything for Accelerate
-    model, optimizer, train_loader, test_loader = accelerator.prepare(
-        model, optimizer, train_loader, test_loader
-    )
-
-    # Training
-    train_model(model, optimizer, train_loader, accelerator)
-
-    # Evaluation
-    evaluate(model, tokenizer, test_loader, accelerator)
+    # Train
+    train_model(model, tokenizer, train_loader)
+    # Evaluate
+    evaluate(model, tokenizer, test_loader)
