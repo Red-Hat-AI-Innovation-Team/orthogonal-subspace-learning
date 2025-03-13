@@ -127,13 +127,19 @@ def generate_answer(model, tokenizer, prompt, max_new_tokens=10):
     # Tokenize only the prompt (without the target)
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
     # Generate tokens starting from the prompt
-    generated_ids = model.generate(input_ids, max_new_tokens=max_new_tokens)
-    # Decode only the newly generated tokens (exclude the prompt)
-    full_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
-    # Extract the answer portion using the marker "Answer:" if present
-    if "Answer:" in full_text:
-        return full_text.split("Answer:")[-1].strip()
-    return full_text.strip()
+    outputs = model.generate(
+        input_ids, 
+        max_new_tokens=max_new_tokens, 
+        return_dict_in_generate=True
+    )
+    
+    # Extract only the newly generated tokens (excluding the input)
+    new_token_ids = outputs.sequences[:, input_ids.shape[-1]:]
+    
+    # Decode only the newly generated tokens
+    new_text = tokenizer.decode(new_token_ids[0], skip_special_tokens=True)
+    
+    return new_text.strip()
 
 def evaluate(model, tokenizer, dataset):
     correct, total = 0, 0
