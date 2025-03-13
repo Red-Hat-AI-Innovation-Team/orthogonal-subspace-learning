@@ -1,8 +1,8 @@
 # Configurable parameters:
-SOURCE_SVD_DATASET = "dbpedia"       # Dataset to use when computing the adaptive SVD config.
-FINE_TUNE_DATASET = "amazon"       # Fine-tuning dataset; options: "agnews", "amazon", "yelp", "dbpedia", "yahoo"
-STARTING_CHECKPOINT = "llama_finetuned_dbpedia.pt"  # Path to the checkpoint you want to start from.
-OUTPUT_MODEL_NAME = "llama_svd_amazon.pt"         # Name for the saved model after fine-tuning.
+SOURCE_SVD_DATASET = "yahoo"       # Dataset to use when computing the adaptive SVD config.
+FINE_TUNE_DATASET = "agnews"       # Fine-tuning dataset; options: "agnews", "amazon", "yelp", "dbpedia", "yahoo"
+STARTING_CHECKPOINT = "llama_svd_yahoo.pt"  # Path to the checkpoint you want to start from.
+OUTPUT_MODEL_NAME = "llama_svd_agnews.pt"         # Name for the saved model after fine-tuning.
 
 import os
 import json
@@ -23,6 +23,77 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 torch.autograd.set_detect_anomaly(True)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+####################################################################
+# Define Dataset Information
+####################################################################
+DATASET_INFOS = {
+    "agnews": {
+        "json_path": "/workspace/O-LoRA/CL_Benchmark/TC/agnews/test.json",
+        "label_mapping": {0: "World", 1: "Sports", 2: "Business", 3: "Science or Technology"}
+    },
+    "amazon": {
+        "json_path": "/workspace/O-LoRA/CL_Benchmark/SC/amazon/test.json",
+        "label_mapping": {0: "negative", 1: "positive", 2: "neutral", 3: "very positive", 4: "very negative"}
+    },
+    "yelp": {
+        "json_path": "/workspace/O-LoRA/CL_Benchmark/SC/yelp/test.json",
+        "label_mapping": {0: "negative", 1: "positive", 2: "neutral", 3: "very positive", 4: "very negative"}
+    },
+    "dbpedia": {
+        "json_path": "/workspace/O-LoRA/CL_Benchmark/TC/dbpedia/test.json",
+        "label_mapping": {0: "Company", 1: "Educational Institution", 2: "Artist",
+                           3: "Athlete", 4: "Office Holder", 5: "Mean of Transportation",
+                           6: "Building", 7: "Natural Place", 8: "Village",
+                           9: "Animal", 10: "Plant", 11: "Album", 12: "Film", 13: "Written Work"}
+    },
+    "yahoo": {
+        "json_path": "/workspace/O-LoRA/CL_Benchmark/TC/yahoo/test.json",
+        "label_mapping": {0: "Society & Culture", 1: "Science & Mathematics", 2: "Health", 3: "Education & Reference",
+                           4: "Computers & Internet", 5: "Sports", 6: "Business & Finance", 7: "Entertainment & Music",
+                           8: "Family & Relationships", 9: "Politics & Government"}
+    },
+    "mnli": {
+        "json_path": "/workspace/O-LoRA/CL_Benchmark/NLI/MNLI/test.json",
+        "label_mapping": {0: "entailment", 1: "neutral", 2: "contradiction"}
+    }, 
+    "qqp": {
+        "json_path": "/workspace/O-LoRA/CL_Benchmark/QQP/QQP/test.json",
+        "label_mapping": {0: "True", 1: "False"}
+    },
+    "rte": {
+        "json_path": "/workspace/O-LoRA/CL_Benchmark/NLI/RTE/test.json",
+        "label_mapping": {0: "entailment", 1: "contradiction"}
+    },
+    "sst-2": {
+        "json_path": "/workspace/O-LoRA/CL_Benchmark/SC/SST-2/test.json",
+        "label_mapping": {0: "Bad", 1: "Good"}
+    },
+    "wic": {
+        "json_path": "/workspace/O-LoRA/CL_Benchmark/WiC/WiC/test.json",
+        "label_mapping": {0: "True", 1: "False"}
+    },
+    "cb": {
+        "json_path": "/workspace/O-LoRA/CL_Benchmark/NLI/CB/test.json",
+        "label_mapping": {0: "contradiction", 1: "entailment", 2: "neutral"}
+    },
+    "copa": {
+        "json_path": "/workspace/O-LoRA/CL_Benchmark/COPA/COPA/test.json",
+        "label_mapping": {0: "A", 1: "B"}
+    },
+    "multirc": {
+        "json_path": "/workspace/O-LoRA/CL_Benchmark/MultiRC/MultiRC/test.json",
+        "label_mapping": {0: "True", 1: "False"}  
+    },
+    "boolqa": {
+        "json_path": "/workspace/O-LoRA/CL_Benchmark/BoolQA/BoolQA/test.json",
+        "label_mapping": {0: "True", 1: "False"}
+    },
+    "imdb": {
+        "json_path": "/workspace/O-LoRA/CL_Benchmark/SC/IMDB/test.json",
+        "label_mapping": {0: "Bad", 1: "Good"}
+    }
+}
 
 def construct_prompt(sample, dataset_name):
     dataset_name = dataset_name.lower()
@@ -455,7 +526,7 @@ def auto_generate_target_svd_config(model):
             # if top_k > full_rank:
             #     top_k = full_rank
             # config[name] = top_k
-            top_k = int(np.floor(max(param.shape)*0.25))
+            top_k = int(np.floor(max(param.shape)*0.75))
             full_rank = min(param.shape)
             if top_k > full_rank:
                 top_k = full_rank
@@ -589,10 +660,17 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
     config = LlamaConfig.from_pretrained(model_name)
     config.use_cache = False  # if applicable for LLaMA; otherwise remove or adjust
 
+    # Create datasets and dataloaders
+    train_dataset = GenericClassificationDataset(train_json_path, tokenizer, label_mapping, dataset_prompt)
+    test_dataset = GenericClassificationDataset(test_json_path, tokenizer, label_mapping, dataset_prompt)
+
+    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True,
+                              collate_fn=lambda batch: collate_fn(batch, tokenizer))
     # Load a base LLaMA model to auto-generate the target SVD config.
     base_model = LlamaWithSVD(config, svd_config={}, initialize_svd=False)
     base_model.load_state_dict(torch.load(starting_checkpoint, map_location=device), strict=False)
     base_model = base_model.to(device, dtype=torch.bfloat16)
+    base_model.gradient_checkpointing_enable()
     target_svd_config = auto_generate_target_svd_config(base_model)
     # target_svd_config = auto_generate_target_svd_config(base_model, tokenizer)
     print("Auto-generated target SVD config:")
@@ -605,16 +683,7 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
     model.load_state_dict(torch.load(starting_checkpoint, map_location=device), strict=False)
     model.reinitialize_svd()
     model = model.to(device, dtype=torch.bfloat16)
-
-    # Create datasets and dataloaders
-    train_dataset = GenericClassificationDataset(train_json_path, tokenizer, label_mapping, dataset_prompt)
-    test_dataset = GenericClassificationDataset(test_json_path, tokenizer, label_mapping, dataset_prompt)
-
-
-    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True,
-                              collate_fn=lambda batch: collate_fn(batch, tokenizer))
-    test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False,
-                             collate_fn=lambda batch: collate_fn(batch, tokenizer))
+    model.gradient_checkpointing_enable()
 
     optimizer = optim.AdamW(model.parameters(), lr=5e-5)
     num_epochs = 1  # adjust as needed
@@ -647,41 +716,96 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
     # Save the fine-tuned model (with SVD modifications)
     torch.save(model.state_dict(), output_model_name)
     print(f"Model saved as '{output_model_name}'")
-    return model, tokenizer, train_loader, test_loader
+    return model, tokenizer, train_dataset, test_dataset
 
 ###################################################
 # 6. Evaluation on Test Set
 ###################################################
-def evaluate_model(model, tokenizer, data_loader, dataset_name="Test"):
-    model.eval()
-    total, correct = 0, 0
+def generate_answer(model, tokenizer, prompt, max_new_tokens=10):
+    # Tokenize only the prompt (without the target)
+    input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
+    # Generate tokens starting from the prompt
+    outputs = model.generate(
+        input_ids, 
+        max_new_tokens=max_new_tokens, 
+        return_dict_in_generate=True
+    )
+    
+    # Extract only the newly generated tokens (excluding the input)
+    new_token_ids = outputs.sequences[:, input_ids.shape[-1]:]
+    
+    # Decode only the newly generated tokens
+    new_text = tokenizer.decode(new_token_ids[0], skip_special_tokens=True)
+    
+    return new_text.strip()
+
+def evaluate(model, tokenizer, dataset, dataset_name="Test"):
+    correct, total = 0, 0
     sample_count = 0
     print(f"Evaluating on {dataset_name} set...")
+    for inp, tgt in tqdm(dataset, desc="Evaluating"):
+        generated_answer = generate_answer(model, tokenizer, inp)
+        if generated_answer.lower() == tgt.lower():
+            correct += 1
+        if sample_count < 5:
+            print(f"[Target: {tgt.strip()} | Prediction: {generated_answer.strip()}]")
+            sample_count += 1
+        total += 1
+    print(f"{dataset_name} Accuracy: {100.0 * correct / total:.2f}%")
 
-    for batch in tqdm(data_loader, desc=f"Evaluating {dataset_name} Set", unit="batch"):
-        # Move batch tensors to device
-        for key, val in batch.items():
-            batch[key] = val.to(device)
-        with torch.no_grad():
-            generated_ids = model.generate(
-                batch["input_ids"],
-                attention_mask=batch["attention_mask"],
-                max_length=16
-            )
-        # Decode predictions and targets
-        predictions = [tokenizer.decode(g, skip_special_tokens=True).strip().lower()
-                       for g in generated_ids]
-        targets = [tokenizer.decode(label, skip_special_tokens=True).strip().lower()
-                   for label in batch["labels"]]
-        for pred, target in zip(predictions, targets):
-            total += 1
-            if pred.lower() == target.lower():
+def evaluate_on_all_tasks(model_checkpoint, dataset_infos):
+    """
+    Loads the final LLaMA SVD model from `model_checkpoint` and evaluates it on each
+    task defined in `dataset_infos` using generation-based evaluation.
+    Prints the accuracy for each task and the overall average accuracy.
+    """
+    model_name = "baffo32/decapoda-research-llama-7B-hf"
+    tokenizer = LlamaTokenizer.from_pretrained(model_name)
+    config = LlamaConfig.from_pretrained(model_name)
+    config.use_cache = False  # disable cache for training/generation
+
+    # Load the trained model in bfloat16 on GPU 0
+    model = LlamaWithSVD(config, svd_config={}, initialize_svd=False)
+    model.load_state_dict(torch.load(model_checkpoint, map_location=device), strict=False)
+    model.reinitialize_svd()
+    model = model.to(device, dtype=torch.bfloat16)
+    model.gradient_checkpointing_enable()
+    model.eval()
+
+    task_accuracies = {}
+
+    # Loop over each task defined in dataset_infos.
+    for task_name, info in dataset_infos.items():
+        print(f"\nEvaluating on {task_name} set:")
+        json_path = info["json_path"]
+        label_mapping = info["label_mapping"]
+
+        if not os.path.exists(json_path):
+            print(f"Warning: Test file not found for {task_name} at {json_path}")
+            continue
+
+        # Load the evaluation dataset (using your GenericClassificationDataset)
+        eval_dataset = GenericClassificationDataset(json_path, tokenizer, label_mapping, task_name.lower())
+
+        correct, total = 0, 0
+        sample_count = 0
+        for prompt, tgt in tqdm(eval_dataset, desc=f"Evaluating {task_name}"):
+            # Generate answer using only the prompt
+            generated_answer = generate_answer(model, tokenizer, prompt, max_new_tokens=16)
+            if generated_answer.strip().lower() == tgt.strip().lower():
                 correct += 1
             if sample_count < 5:
-                print(f"[{dataset_name} Set] Target: {target} | Prediction: {pred}")
+                print(f"[Target: {tgt.strip()} | Prediction: {generated_answer.strip()}]")
                 sample_count += 1
-    accuracy = correct / total if total > 0 else 0
-    print(f"{dataset_name} Accuracy: {accuracy * 100:.2f}%")
+            total += 1
+
+        acc = correct / total if total > 0 else 0
+        task_accuracies[task_name] = acc
+        print(f"{task_name} accuracy: {acc * 100:.2f}%")
+
+    avg_acc = np.mean(list(task_accuracies.values())) if task_accuracies else 0
+    print("\nAverage accuracy across all tasks: {:.2f}%".format(avg_acc * 100))
+    return task_accuracies
 
 ###################################################
 # 7. Main
@@ -689,7 +813,7 @@ def evaluate_model(model, tokenizer, data_loader, dataset_name="Test"):
 if __name__ == "__main__":
 
     # Train the model and save it
-    model, tokenizer, train_loader, test_loader = train_svd_model(
+    model, tokenizer, train_dataset, test_dataset = train_svd_model(
         fine_tune_dataset=FINE_TUNE_DATASET,
         starting_checkpoint=STARTING_CHECKPOINT,
         output_model_name=OUTPUT_MODEL_NAME
@@ -703,14 +827,17 @@ if __name__ == "__main__":
     config = LlamaConfig.from_pretrained(model_name)
 
     # Initialize the model with the same SVD config used in training
-    base_model = LlamaWithSVD(config, svd_config={}, initialize_svd=False)
-    base_model.load_state_dict(torch.load(OUTPUT_MODEL_NAME, map_location=device), strict=False)
-    base_model.reinitialize_svd()
-    base_model = base_model.to(device, dtype=torch.bfloat16)
-    base_model.eval()
+    model = LlamaWithSVD(config, svd_config={}, initialize_svd=False)
+    model.load_state_dict(torch.load(OUTPUT_MODEL_NAME, map_location=device), strict=False)
+    model.reinitialize_svd()
+    model = model.to(device, dtype=torch.bfloat16)
+    model.gradient_checkpointing_enable()
+    model.eval()
     
     print(f"Loaded saved model from '{OUTPUT_MODEL_NAME}' for evaluation.")
 
     # Evaluate on both Train and Test sets
-    evaluate_model(base_model, tokenizer, train_loader, dataset_name="Train")
-    evaluate_model(base_model, tokenizer, test_loader, dataset_name="Test")
+    evaluate(model, tokenizer, train_dataset, dataset_name="Train")
+    evaluate(model, tokenizer, test_dataset, dataset_name="Test")
+
+    # evaluate_on_all_tasks(OUTPUT_MODEL_NAME, DATASET_INFOS)
