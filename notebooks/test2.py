@@ -17,40 +17,42 @@ from datasets import load_dataset, concatenate_datasets
 from tqdm import tqdm
 import numpy as np
 
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 torch.autograd.set_detect_anomaly(True)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 def construct_prompt(sample, dataset_name):
     dataset_name = dataset_name.lower()
     if dataset_name == "agnews":
-        # return "classify ag_news dataset: " + sample["text"]
         return (
-            "What is the topic of the following paragraph? "
-            "Choose one from the following options [World, Sports, Business, Science or Technology]. "
-            + sample["text"]
+            "Classify the following text into one of these categories: "
+            "[World, Sports, Business, Science or Technology].\n\n"
+            "Text: " + sample["text"] + "\nAnswer:"
         )
     elif dataset_name in ["amazon", "yelp"]:
-        # return "classify amazon dataset: " + sample["content"]
         return (
-            "What is the sentiment of the following paragraph? "
-            "Choose one from the following options [very negative, negative, neutral, positive, very positive]. "
-            + sample["text"]
+            "Classify the sentiment of the following text into one of these categories: "
+            "[very negative, negative, neutral, positive, very positive].\n\n"
+            "Text: " + sample["text"] + "\nAnswer:"
         )
     elif dataset_name == "dbpedia":
-        # return "classify dbpedia dataset: " + sample["content"]
         return (
-            "What is the topic of the following paragraph? "
-            "Choose one from the following options [Company, Educational Institution, Artist, Athlete, Office Holder, "
-            "Mean of Transportation, Building, Natural Place, Village, Animal, Plant, Album, "
-            "Film, Written Work]. "
-            + sample["text"]
+            "Classify the following text into one of these categories: "
+            "[Company, Educational Institution, Artist, Athlete, Office Holder, "
+            "Mean of Transportation, Building, Natural Place, Village, Animal, "
+            "Plant, Album, Film, Written Work].\n\n"
+            "Text: " + sample["text"] + "\nAnswer:"
         )
     elif dataset_name == "yahoo":
-        # return "classify yahoo dataset: " + sample["question_title"] + " " + sample["question_content"]
         return (
-            "What is the topic of the following paragraph? "
-            "Choose one from the following options [Sports, Entertainment & Music, Health, Education & Reference, Family & Relationships, Politics & Government, Science & Mathematics, Business & Finance, Computers & Internet, Society & Culture]. "
-            + sample["text"]
+            "Classify the following text into one of these categories: "
+            "[Sports, Entertainment & Music, Health, Education & Reference, "
+            "Family & Relationships, Politics & Government, Science & Mathematics, "
+            "Business & Finance, Computers & Internet, Society & Culture].\n\n"
+            "Text: " + sample["text"] + "\nAnswer:"
         )
     elif dataset_name == "mnli":
         # return "classify mnli dataset: premise: " + sample["premise"] + " hypothesis: " + sample["hypothesis"]
@@ -453,7 +455,7 @@ def auto_generate_target_svd_config(model):
             # if top_k > full_rank:
             #     top_k = full_rank
             # config[name] = top_k
-            top_k = int(np.floor(max(param.shape)*0.28))
+            top_k = int(np.floor(max(param.shape)*0.25))
             full_rank = min(param.shape)
             if top_k > full_rank:
                 top_k = full_rank
@@ -495,12 +497,31 @@ class GenericClassificationDataset(Dataset):
         input_text = construct_prompt(sample, self.dataset_name)
         return input_text, sample["label"]
 
-def collate_fn_fn(batch, tokenizer, max_source_length=512, max_target_length=16):
+def collate_fn(batch, tokenizer, max_length=256):
     inputs, targets = zip(*batch)
-    input_encodings = tokenizer(list(inputs), padding=True, truncation=True, max_length=max_source_length, return_tensors="pt")
-    target_encodings = tokenizer([str(t) for t in targets], padding=True, truncation=True, max_length=max_target_length, return_tensors="pt")
-    input_encodings["labels"] = target_encodings["input_ids"]
-    return input_encodings
+    # Create full texts: prompt + " " + target
+    full_texts = [inp + " " + tgt for inp, tgt in zip(inputs, targets)]
+    encodings = tokenizer(
+        full_texts, padding=True, truncation=True,
+        max_length=max_length, return_tensors="pt"
+    )
+    
+    # Now create labels, but mask out the prompt tokens.
+    # First, get the tokenized version of just the prompt.
+    prompt_texts = [inp for inp in inputs]
+    prompt_encodings = tokenizer(
+        prompt_texts, padding=True, truncation=True,
+        max_length=max_length, return_tensors="pt"
+    )
+    labels = encodings["input_ids"].clone()
+    
+    # For each sample, set label tokens corresponding to the prompt to -100.
+    for i in range(len(full_texts)):
+        prompt_length = prompt_encodings["input_ids"][i].ne(tokenizer.pad_token_id).sum()
+        # Set all tokens up to prompt_length to -100 so loss isn't computed on them
+        labels[i, :prompt_length] = -100
+    encodings["labels"] = labels
+    return encodings
 
 ###################################################
 
@@ -563,13 +584,15 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
 
     model_name = "baffo32/decapoda-research-llama-7B-hf"
     tokenizer = LlamaTokenizer.from_pretrained(model_name)
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.pad_token_id = tokenizer.eos_token_id
     config = LlamaConfig.from_pretrained(model_name)
     config.use_cache = False  # if applicable for LLaMA; otherwise remove or adjust
 
     # Load a base LLaMA model to auto-generate the target SVD config.
     base_model = LlamaWithSVD(config, svd_config={}, initialize_svd=False)
     base_model.load_state_dict(torch.load(starting_checkpoint, map_location=device), strict=False)
-    base_model = base_model.to(device)
+    base_model = base_model.to(device, dtype=torch.bfloat16)
     target_svd_config = auto_generate_target_svd_config(base_model)
     # target_svd_config = auto_generate_target_svd_config(base_model, tokenizer)
     print("Auto-generated target SVD config:")
@@ -581,7 +604,7 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
     # Load pretrained weights into our SVD model.
     model.load_state_dict(torch.load(starting_checkpoint, map_location=device), strict=False)
     model.reinitialize_svd()
-    model = model.to(device)
+    model = model.to(device, dtype=torch.bfloat16)
 
     # Create datasets and dataloaders
     train_dataset = GenericClassificationDataset(train_json_path, tokenizer, label_mapping, dataset_prompt)
@@ -589,9 +612,9 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
 
 
     train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True,
-                              collate_fn=lambda batch: collate_fn_fn(batch, tokenizer))
+                              collate_fn=lambda batch: collate_fn(batch, tokenizer))
     test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False,
-                             collate_fn=lambda batch: collate_fn_fn(batch, tokenizer))
+                             collate_fn=lambda batch: collate_fn(batch, tokenizer))
 
     optimizer = optim.AdamW(model.parameters(), lr=5e-5)
     num_epochs = 1  # adjust as needed
@@ -675,13 +698,15 @@ if __name__ == "__main__":
     # Reload the saved model for evaluation (exactly the same as training)
     model_name = "baffo32/decapoda-research-llama-7B-hf"
     tokenizer = LlamaTokenizer.from_pretrained(model_name)
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.pad_token_id = tokenizer.eos_token_id
     config = LlamaConfig.from_pretrained(model_name)
 
     # Initialize the model with the same SVD config used in training
     base_model = LlamaWithSVD(config, svd_config={}, initialize_svd=False)
     base_model.load_state_dict(torch.load(OUTPUT_MODEL_NAME, map_location=device), strict=False)
     base_model.reinitialize_svd()
-    base_model = base_model.to(device)
+    base_model = base_model.to(device, dtype=torch.bfloat16)
     base_model.eval()
     
     print(f"Loaded saved model from '{OUTPUT_MODEL_NAME}' for evaluation.")
