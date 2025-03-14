@@ -6,13 +6,34 @@ from transformers import LlamaForCausalLM, LlamaTokenizer, BitsAndBytesConfig
 from tqdm import tqdm
 import json
 import os
+import deepspeed
 
 # Force usage of a single GPU: GPU 0
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 # Define device
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Define DeepSpeed configuration
+ds_config = {
+    "train_micro_batch_size_per_gpu": 2,  # Reduce batch size per GPU
+    "zero_optimization": {
+        "stage": 3,  # ZeRO-3: Offload optimizer, gradients, and model states
+        "offload_param": {"device": "cpu"},  # Offload parameters to CPU
+        "offload_optimizer": {"device": "cpu"},  # Offload optimizer states to CPU
+    },
+    "gradient_checkpointing": True,  # Save memory
+    "optimizer": {
+        "type": "AdamW",
+        "params": {
+            "lr": 1e-5,
+            "betas": [0.9, 0.999],
+            "eps": 1e-8,
+            "weight_decay": 0.01
+        }
+    }
+}
 
 # Define Dataset
 class DBpediaDataset(Dataset):
@@ -71,9 +92,8 @@ def load_model():
     tokenizer.pad_token_id = tokenizer.eos_token_id
 
     # Load model with BF16 and enable gradient checkpointing for memory savings
-    model = LlamaForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
+    model = LlamaForCausalLM.from_pretrained(model_name)
     model.gradient_checkpointing_enable()  # Save memory during backpropagation
-    model.to("cuda:0")  # Force model to GPU 0
     return model, tokenizer
 
 def load_finetuned_model(model_path="llama_finetuned_dbpedia.pt"):
@@ -85,42 +105,44 @@ def load_finetuned_model(model_path="llama_finetuned_dbpedia.pt"):
     tokenizer.pad_token = tokenizer.eos_token  # Add padding token
     tokenizer.pad_token_id = tokenizer.eos_token_id
 
-    model = LlamaForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    model = LlamaForCausalLM.from_pretrained(model_name)
+    model.load_state_dict(torch.load(model_path))
     model.gradient_checkpointing_enable()  # Enable checkpointing here too
-    model.to("cuda:0")  # Force model to GPU 0
     model.eval()  # Set to evaluation mode
     print(f"Loaded fine-tuned model from {model_path}")
     return model, tokenizer
 
 # Training function (no accelerate)
 def train_model(model, tokenizer, train_loader):
-    optimizer = optim.AdamW(model.parameters(), lr=1e-5)
     model.train()
+
+    # Initialize DeepSpeed
+    model, optimizer, _, _ = deepspeed.initialize(
+        model=model, 
+        config=ds_config
+    )
+
+    model = torch.compile(model)
     for epoch in range(1):
         total_loss = 0.0
         progress_bar = tqdm(train_loader, desc="Training", unit="batch")
         for batch in progress_bar:
             # Move batch to model's device (using the first parameter's device)
-            first_param_device = next(model.parameters()).device
-            for key in batch:
-                batch[key] = batch[key].to(first_param_device)
+            batch = {k: v.to(model.device) for k, v in batch.items()}  # Move batch to correct model device
 
             outputs = model(**batch)
             loss = outputs.loss
-            optimizer.zero_grad()
-            loss.backward()  # Backpropagation
-            optimizer.step()
+            model.backward(loss)
+            model.step()
 
             total_loss += loss.item()
             progress_bar.set_postfix(loss=loss.item())
-            torch.cuda.empty_cache()  # Optionally clear cache after each batch
 
         print(f"Epoch finished - Avg Loss: {total_loss / len(train_loader):.4f}")
     
     # Save the trained model
-    model_path = "llama_finetuned_dbpedia.pt"
-    torch.save(model.state_dict(), model_path)
+    model_path = "llama_finetuned_dbpedia"
+    model.save_checkpoint(model_path)
     print(f"Model saved as '{model_path}'")
 
 def generate_answer(model, tokenizer, prompt, max_new_tokens=10):
