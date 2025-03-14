@@ -95,7 +95,7 @@ def load_finetuned_model(model_path="llama_finetuned_dbpedia.pt"):
 
 # Training function (no accelerate)
 def train_model(model, tokenizer, train_loader):
-    optimizer = optim.AdamW(model.parameters(), lr=5e-5)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-5)
     model.train()
     for epoch in range(1):
         total_loss = 0.0

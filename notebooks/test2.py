@@ -685,7 +685,7 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
     model = model.to(device, dtype=torch.bfloat16)
     model.gradient_checkpointing_enable()
 
-    optimizer = optim.AdamW(model.parameters(), lr=5e-5)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-5)
     num_epochs = 1  # adjust as needed
 
     model.train()
