@@ -28,18 +28,6 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # Define Dataset Information
 ####################################################################
 DATASET_INFOS = {
-    "agnews": {
-        "json_path": "/workspace/O-LoRA/CL_Benchmark/TC/agnews/test.json",
-        "label_mapping": {0: "World", 1: "Sports", 2: "Business", 3: "Science or Technology"}
-    },
-    "amazon": {
-        "json_path": "/workspace/O-LoRA/CL_Benchmark/SC/amazon/test.json",
-        "label_mapping": {0: "negative", 1: "positive", 2: "neutral", 3: "very positive", 4: "very negative"}
-    },
-    "yelp": {
-        "json_path": "/workspace/O-LoRA/CL_Benchmark/SC/yelp/test.json",
-        "label_mapping": {0: "negative", 1: "positive", 2: "neutral", 3: "very positive", 4: "very negative"}
-    },
     "dbpedia": {
         "json_path": "/workspace/O-LoRA/CL_Benchmark/TC/dbpedia/test.json",
         "label_mapping": {0: "Company", 1: "Educational Institution", 2: "Artist",
@@ -47,52 +35,64 @@ DATASET_INFOS = {
                            6: "Building", 7: "Natural Place", 8: "Village",
                            9: "Animal", 10: "Plant", 11: "Album", 12: "Film", 13: "Written Work"}
     },
+    "amazon": {
+        "json_path": "/workspace/O-LoRA/CL_Benchmark/SC/amazon/test.json",
+        "label_mapping": {0: "negative", 1: "positive", 2: "neutral", 3: "very positive", 4: "very negative"}
+    },
     "yahoo": {
         "json_path": "/workspace/O-LoRA/CL_Benchmark/TC/yahoo/test.json",
         "label_mapping": {0: "Society & Culture", 1: "Science & Mathematics", 2: "Health", 3: "Education & Reference",
                            4: "Computers & Internet", 5: "Sports", 6: "Business & Finance", 7: "Entertainment & Music",
                            8: "Family & Relationships", 9: "Politics & Government"}
     },
-    "mnli": {
-        "json_path": "/workspace/O-LoRA/CL_Benchmark/NLI/MNLI/test.json",
-        "label_mapping": {0: "entailment", 1: "neutral", 2: "contradiction"}
-    }, 
-    "qqp": {
-        "json_path": "/workspace/O-LoRA/CL_Benchmark/QQP/QQP/test.json",
-        "label_mapping": {0: "True", 1: "False"}
+    "agnews": {
+        "json_path": "/workspace/O-LoRA/CL_Benchmark/TC/agnews/test.json",
+        "label_mapping": {0: "World", 1: "Sports", 2: "Business", 3: "Science or Technology"}
     },
-    "rte": {
-        "json_path": "/workspace/O-LoRA/CL_Benchmark/NLI/RTE/test.json",
-        "label_mapping": {0: "entailment", 1: "contradiction"}
-    },
-    "sst-2": {
-        "json_path": "/workspace/O-LoRA/CL_Benchmark/SC/SST-2/test.json",
-        "label_mapping": {0: "Bad", 1: "Good"}
-    },
-    "wic": {
-        "json_path": "/workspace/O-LoRA/CL_Benchmark/WiC/WiC/test.json",
-        "label_mapping": {0: "True", 1: "False"}
-    },
-    "cb": {
-        "json_path": "/workspace/O-LoRA/CL_Benchmark/NLI/CB/test.json",
-        "label_mapping": {0: "contradiction", 1: "entailment", 2: "neutral"}
-    },
-    "copa": {
-        "json_path": "/workspace/O-LoRA/CL_Benchmark/COPA/COPA/test.json",
-        "label_mapping": {0: "A", 1: "B"}
-    },
-    "multirc": {
-        "json_path": "/workspace/O-LoRA/CL_Benchmark/MultiRC/MultiRC/test.json",
-        "label_mapping": {0: "True", 1: "False"}  
-    },
-    "boolqa": {
-        "json_path": "/workspace/O-LoRA/CL_Benchmark/BoolQA/BoolQA/test.json",
-        "label_mapping": {0: "True", 1: "False"}
-    },
-    "imdb": {
-        "json_path": "/workspace/O-LoRA/CL_Benchmark/SC/IMDB/test.json",
-        "label_mapping": {0: "Bad", 1: "Good"}
-    }
+    # "yelp": {
+    #     "json_path": "/workspace/O-LoRA/CL_Benchmark/SC/yelp/test.json",
+    #     "label_mapping": {0: "negative", 1: "positive", 2: "neutral", 3: "very positive", 4: "very negative"}
+    # },
+    # "mnli": {
+    #     "json_path": "/workspace/O-LoRA/CL_Benchmark/NLI/MNLI/test.json",
+    #     "label_mapping": {0: "entailment", 1: "neutral", 2: "contradiction"}
+    # }, 
+    # "qqp": {
+    #     "json_path": "/workspace/O-LoRA/CL_Benchmark/QQP/QQP/test.json",
+    #     "label_mapping": {0: "True", 1: "False"}
+    # },
+    # "rte": {
+    #     "json_path": "/workspace/O-LoRA/CL_Benchmark/NLI/RTE/test.json",
+    #     "label_mapping": {0: "entailment", 1: "contradiction"}
+    # },
+    # "sst-2": {
+    #     "json_path": "/workspace/O-LoRA/CL_Benchmark/SC/SST-2/test.json",
+    #     "label_mapping": {0: "Bad", 1: "Good"}
+    # },
+    # "wic": {
+    #     "json_path": "/workspace/O-LoRA/CL_Benchmark/WiC/WiC/test.json",
+    #     "label_mapping": {0: "True", 1: "False"}
+    # },
+    # "cb": {
+    #     "json_path": "/workspace/O-LoRA/CL_Benchmark/NLI/CB/test.json",
+    #     "label_mapping": {0: "contradiction", 1: "entailment", 2: "neutral"}
+    # },
+    # "copa": {
+    #     "json_path": "/workspace/O-LoRA/CL_Benchmark/COPA/COPA/test.json",
+    #     "label_mapping": {0: "A", 1: "B"}
+    # },
+    # "multirc": {
+    #     "json_path": "/workspace/O-LoRA/CL_Benchmark/MultiRC/MultiRC/test.json",
+    #     "label_mapping": {0: "True", 1: "False"}  
+    # },
+    # "boolqa": {
+    #     "json_path": "/workspace/O-LoRA/CL_Benchmark/BoolQA/BoolQA/test.json",
+    #     "label_mapping": {0: "True", 1: "False"}
+    # },
+    # "imdb": {
+    #     "json_path": "/workspace/O-LoRA/CL_Benchmark/SC/IMDB/test.json",
+    #     "label_mapping": {0: "Bad", 1: "Good"}
+    # }
 }
 
 def construct_prompt(sample, dataset_name):
