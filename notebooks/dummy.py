@@ -380,12 +380,6 @@ class LlamaWithSVD(LlamaForCausalLM):
         Before reinitialization, store a copy of the original weights for each target parameter,
         then after reinitialization, check and print the reconstruction error.
         """
-        # Save original weights for each parameter to be decomposed.
-        self._original_weights = {}
-        for orig_name in self.svd_config.keys():
-            # Retrieve from the model's state_dict; ensure it is on the correct device.
-            self._original_weights[orig_name] = self.state_dict()[orig_name].clone().to(device)
-
         # Clear previous SVD mappings.
         self.name_mapping = {}
         self.svd_original_mapping = {}
@@ -394,22 +388,10 @@ class LlamaWithSVD(LlamaForCausalLM):
         # Reinitialize the SVD decomposition using the current weights.
         self._initialize_svd_parameters()
 
-        # Now, for each decomposed parameter, compute and print the reconstruction error.
-        for orig_name, safe_name in self.name_mapping.items():
-            orig_weight = self._original_weights[orig_name]
-            svd_dict = {
-                "U_high": getattr(self, f"{safe_name}_U_high"),
-                "S_high": getattr(self, f"{safe_name}_S_high"),
-                "V_high": getattr(self, f"{safe_name}_V_high"),
-                "U_low": self.svd_params[safe_name].U_low,
-                "S_low": self.svd_params[safe_name].S_low,
-                "V_low": self.svd_params[safe_name].V_low
-            }
-            error = check_reconstruction_error(orig_weight, svd_dict)
-            print(f"Reconstruction error for {orig_name}: {error:.2e}")
-
     def _initialize_svd_parameters(self):
         # Iterate over all parameters
+        for name, param in self.named_parameters():
+            print(f"{name} is on {param.device}")
         for name, param in list(self.named_parameters()):
             if len(param.shape) == 2 and name in self.svd_config and self.svd_config[name] > 0:
                 top_k = self.svd_config[name]
@@ -724,247 +706,6 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
     # Option 1: Replace the existing parameter group (if you have one group)
     optimizer.param_groups[0]["params"] = new_trainable_params
 
-    # optimizer = optim.AdamW(model.parameters(), lr=1e-5)
-    num_epochs = 1  # adjust as needed
-
-    model_engine.train()
-    for epoch in range(num_epochs):
-        # Important: set the epoch on sampler for correct shuffling across epochs
-        train_sampler.set_epoch(epoch)
-        total_loss = 0.0
-        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}", unit="batch", leave=True)
-        start_time = time.time()
-
-        for batch in progress_bar:
-            for key, val in batch.items():
-                batch[key] = val.to(model_engine.device)
-            outputs = model_engine(**batch, use_cache=False)
-            loss = outputs.loss
-
-            model_engine.zero_grad()
-            loss.backward()
-            model_engine.project_gradients()  # if your model uses project_gradients
-            model_engine.step()
-
-            total_loss += loss.item()
-            elapsed_time = time.time() - start_time
-            remaining_time = elapsed_time / (progress_bar.n + 1) * (len(train_loader) - progress_bar.n)
-            progress_bar.set_postfix(loss=f"{loss.item():.4f}", eta=f"{remaining_time:.2f}s")
-
-        avg_loss = total_loss / len(train_loader)
-        print(f"Epoch {epoch+1}/{num_epochs} - Average Loss: {avg_loss:.4f}")
-
-    # Save the fine-tuned model (with SVD modifications)
-    # torch.save(model.state_dict(), output_model_name)
-    model_engine.save_checkpoint(output_model_name)
-    print(f"Model saved as '{output_model_name}'")
-    return model_engine, tokenizer, train_dataset, test_dataset
-
-def evaluate(
-    model_engine,
-    tokenizer,
-    dataset,
-    dataset_name="Test",
-    max_new_tokens=10
-):
-    """
-    Evaluate using a distributed sampler. Each rank processes a portion
-    of the dataset, then we gather total correct & total samples across ranks.
-    Only rank 0 prints the final accuracy.
-    """
-    # Create a distributed sampler for the dataset
-    test_sampler = DistributedSampler(dataset, shuffle=False)
-    test_loader = DataLoader(
-        dataset,
-        sampler=test_sampler,
-        batch_size=1,  # for generation, we typically use batch_size=1
-        collate_fn=lambda batch: collate_fn(batch, tokenizer)
-    )
-
-    model_engine.eval()
-    n_correct_local = 0
-    n_total_local = 0
-    sample_count = 0
-
-    # We define a helper to generate answers
-    def generate_answer(model_engine, tokenizer, prompt):
-        # Note: For DeepSpeed ZeRO inference + .generate(...),
-        # you typically call .module.generate(...) if 'model_engine.module'
-        # is your underlying model. Alternatively, wrap your model in pipeline
-        # logic or call model_engine.module.forward directly.
-        input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model_engine.device)
-        with torch.no_grad():
-            outputs = model_engine.module.generate(
-                input_ids,
-                max_new_tokens=max_new_tokens,
-                return_dict_in_generate=True
-            )
-        new_token_ids = outputs.sequences[:, input_ids.shape[-1]:]
-        return tokenizer.decode(new_token_ids[0], skip_special_tokens=True).strip()
-
-    # Loop over your test loader
-    for batch in tqdm(test_loader, desc=f"Evaluating {dataset_name}", leave=True):
-        # 'batch' is the collated dictionary with 'input_ids', 'labels', etc.
-        # But for generation-based classification, you might have stored the prompt & label
-        # in your dataset's __getitem__ -> we need to retrieve them carefully.
-        # Let's assume your GenericClassificationDataset returns (input_text, target_string).
-        # We’ll do something like:
-        # batch == {"input_ids": ..., "labels": ...}, but we actually want the text pairs
-        # If you used a collate_fn that creates the model's inputs, we need to track
-        # the raw prompt & label separately in the dataset or adapt the code below.
-
-        # For simplicity, suppose your dataset's __getitem__ returns a single example
-        # so each 'batch' is effectively size=1, with "input_ids" and "labels".
-        # We actually need the *raw prompt text* and the *raw target text* to do generation matching.
-        # A simpler way is to store the raw strings in your dataset, then do:
-        #   for (prompt, target) in test_dataset:
-        #     ...
-        # But let's assume you're consistent with your train collate_fn.
-
-        # If you do want to strictly reuse your 'evaluate(...)' function from your code,
-        # you can do something like storing the raw text in the dataset’s item, then
-        # returning it directly. For demonstration, here's a manual approach:
-
-        # If in your collate_fn, you packed the original prompts & labels, you'd extract them:
-        # (You might need to adjust this, depending on how your collate_fn is set up!)
-        # But commonly you'll have to store the 'inp' and 'tgt' in batch["prompt"] & batch["label"]
-        # or something similar. Then do:
-        input_text = batch["prompt_text"][0]  # raw prompt
-        target_text = batch["target_text"][0]
-
-        # Generate
-        generated_answer = generate_answer(model_engine, tokenizer, input_text)
-
-        # Compare
-        if generated_answer.lower() == target_text.lower():
-            n_correct_local += 1
-
-        # Print a few sample predictions on each rank if you wish,
-        # or only on rank 0. Example:
-        if sample_count < 5 and dist.get_rank() == 0:
-            print(f"[Target: {target_text.strip()} | Prediction: {generated_answer.strip()}]")
-        sample_count += 1
-
-        n_total_local += 1
-
-    # Now we need to sum across all ranks
-    n_correct_tensor = torch.tensor(n_correct_local, device=model_engine.device, dtype=torch.long)
-    n_total_tensor  = torch.tensor(n_total_local, device=model_engine.device, dtype=torch.long)
-
-    dist.all_reduce(n_correct_tensor, op=dist.ReduceOp.SUM)
-    dist.all_reduce(n_total_tensor,  op=dist.ReduceOp.SUM)
-
-    # Only rank 0 prints the final
-    if dist.get_rank() == 0:
-        final_acc = (n_correct_tensor.item() / n_total_tensor.item() * 100) if n_total_tensor.item() > 0 else 0
-        print(f"{dataset_name} Accuracy: {final_acc:.2f}%")
-
-def evaluate_on_all_tasks(
-    model_checkpoint_dir,  # folder where your DS checkpoint is stored
-    dataset_infos
-):
-    """
-    Loads the final LLaMA SVD model from `model_checkpoint_dir` (DeepSpeed checkpoint)
-    and evaluates it on each task defined in `dataset_infos`.
-    Prints the accuracy for each task and the overall average accuracy.
-    """
-    import torch.distributed as dist
-
-    # Load tokenizer & config
-    model_name = "baffo32/decapoda-research-llama-7B-hf"
-    tokenizer = LlamaTokenizer.from_pretrained(model_name)
-    config = LlamaConfig.from_pretrained(model_name)
-    config.use_cache = False
-
-    # Initialize our model
-    model = LlamaWithSVD(config, svd_config={}, initialize_svd=False)
-    model.reinitialize_svd()  # If needed. Or do it after load below.
-
-    # Wrap with DeepSpeed
-    model_engine, _, _, _ = deepspeed.initialize(
-        model=model,
-        config=ds_config
-    )
-
-    # Now load the DS checkpoint from model_checkpoint_dir
-    # This effectively loads the model's weights into model_engine.
-    model_engine.load_checkpoint(model_checkpoint_dir)
-    model_engine.eval()
-
-    # We'll track results in a dictionary
-    all_accuracies = {}
-    for task_name, info in dataset_infos.items():
-        if not os.path.exists(info["json_path"]):
-            if dist.get_rank() == 0:
-                print(f"Warning: Test file not found for {task_name} at {info['json_path']}")
-            continue
-
-        # Build the dataset (like GenericClassificationDataset):
-        dataset = GenericClassificationDataset(
-            info["json_path"],
-            tokenizer,
-            info["label_mapping"],
-            task_name.lower()
-        )
-
-        # Evaluate using the same distributed approach as above
-        test_sampler = DistributedSampler(dataset, shuffle=False)
-        test_loader = DataLoader(
-            dataset,
-            sampler=test_sampler,
-            batch_size=1,
-            collate_fn=lambda b: collate_fn(b, tokenizer)
-        )
-
-        # We'll do a local counter again
-        correct_local, total_local = 0, 0
-        sample_count = 0
-
-        # Helper for generation
-        def generate_answer(prompt):
-            input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model_engine.device)
-            with torch.no_grad():
-                outputs = model_engine.module.generate(
-                    input_ids,
-                    max_new_tokens=16,
-                    return_dict_in_generate=True
-                )
-            new_token_ids = outputs.sequences[:, input_ids.shape[-1]:]
-            return tokenizer.decode(new_token_ids[0], skip_special_tokens=True).strip()
-
-        # Loop
-        for batch in tqdm(test_loader, desc=f"Evaluating {task_name}"):
-            # Adjust if your collate_fn has a different structure
-            input_text = batch["prompt_text"][0]
-            target_text = batch["target_text"][0]
-
-            gen_ans = generate_answer(input_text)
-            if gen_ans.lower() == target_text.lower():
-                correct_local += 1
-
-            if sample_count < 5 and dist.get_rank() == 0:
-                print(f"[{task_name}] Target: {target_text} | Pred: {gen_ans}")
-            sample_count += 1
-            total_local += 1
-
-        # Sum across ranks
-        correct_tensor = torch.tensor(correct_local, device=model_engine.device, dtype=torch.long)
-        total_tensor = torch.tensor(total_local, device=model_engine.device, dtype=torch.long)
-
-        dist.all_reduce(correct_tensor, op=dist.ReduceOp.SUM)
-        dist.all_reduce(total_tensor,  op=dist.ReduceOp.SUM)
-
-        if dist.get_rank() == 0:
-            accuracy = float(correct_tensor.item()) / float(total_tensor.item()) if total_tensor.item() > 0 else 0
-            all_accuracies[task_name] = accuracy
-            print(f"{task_name} accuracy: {accuracy*100:.2f}%")
-
-    # If rank 0, compute overall average
-    if dist.get_rank() == 0 and all_accuracies:
-        avg_acc = np.mean(list(all_accuracies.values())) * 100
-        print(f"\nAverage accuracy across all tasks: {avg_acc:.2f}%")
-    return all_accuracies
-
 ###################################################
 # 7. Main
 ###################################################
@@ -973,47 +714,8 @@ if __name__ == "__main__":
     deepspeed.init_distributed()  # Initialize distributed
 
     # 1) Train the model (DeepSpeed checkpoint saved in OUTPUT_MODEL_NAME folder)
-    model_engine, tokenizer, train_dataset, test_dataset = train_svd_model(
+    train_svd_model(
         fine_tune_dataset=FINE_TUNE_DATASET,
         starting_checkpoint=STARTING_CHECKPOINT,
         output_model_name=OUTPUT_MODEL_NAME
     )
-    # Note: If your train_svd_model(...) returns the raw model and not the model_engine,
-    # that is also fine. Adjust accordingly.
-
-    # 2) Reload for evaluation
-    # We'll do a fresh model + DS init for inference:
-    model_name = "baffo32/decapoda-research-llama-7B-hf"
-    tokenizer = LlamaTokenizer.from_pretrained(model_name)
-    tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.pad_token_id = tokenizer.eos_token_id
-
-    config = LlamaConfig.from_pretrained(model_name)
-    config.use_cache = False
-
-    # Initialize SVD model
-    eval_model = LlamaWithSVD(config, svd_config={}, initialize_svd=False)
-    eval_model.reinitialize_svd()
-
-    # Wrap with DeepSpeed
-    eval_engine, _, _, _ = deepspeed.initialize(
-        model=eval_model,
-        config=ds_config
-    )
-
-    # Load from the DS checkpoint directory we saved
-    eval_engine.load_checkpoint(OUTPUT_MODEL_NAME)
-    eval_engine.eval()
-
-    if dist.get_rank() == 0:
-        print(f"Loaded saved model from '{OUTPUT_MODEL_NAME}' for evaluation.")
-
-    # 3) Evaluate on train and test sets
-    # We'll define two small helper calls so we can pass them to our new evaluate function
-    # We must have a way to do generation that references `eval_engine.module.generate(...)`.
-    # E.g.:
-    evaluate(eval_engine, tokenizer, train_dataset, dataset_name="Train")
-    evaluate(eval_engine, tokenizer, test_dataset, dataset_name="Test")
-
-    # 4) Optionally evaluate on all tasks
-    # evaluate_on_all_tasks(OUTPUT_MODEL_NAME, DATASET_INFOS)
