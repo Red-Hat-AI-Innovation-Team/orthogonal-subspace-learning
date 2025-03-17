@@ -7,10 +7,11 @@ from tqdm import tqdm
 import json
 import os
 import deepspeed
+from torch.utils.data.distributed import DistributedSampler
 
 # Force usage of a single GPU: GPU 0
 # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 # Define device
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -19,9 +20,7 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 ds_config = {
     "train_micro_batch_size_per_gpu": 2,  # Reduce batch size per GPU
     "zero_optimization": {
-        "stage": 3,  # ZeRO-3: Offload optimizer, gradients, and model states
-        "offload_param": {"device": "cpu"},  # Offload parameters to CPU
-        "offload_optimizer": {"device": "cpu"},  # Offload optimizer states to CPU
+        "stage": 2,  # ZeRO-3: Offload optimizer, gradients, and model states
     },
     "gradient_checkpointing": True,  # Save memory
     "optimizer": {
@@ -96,20 +95,28 @@ def load_model():
     model.gradient_checkpointing_enable()  # Save memory during backpropagation
     return model, tokenizer
 
-def load_finetuned_model(model_path="llama_finetuned_dbpedia.pt"):
+def load_finetuned_model(model_path="llama_finetuned_dbpedia"):
     """
-    Load the fine-tuned LLaMA model from disk.
+    Correctly load the fine-tuned LLaMA model from a DeepSpeed checkpoint.
     """
     model_name = "baffo32/decapoda-research-llama-7B-hf"
     tokenizer = LlamaTokenizer.from_pretrained(model_name)
     tokenizer.pad_token = tokenizer.eos_token  # Add padding token
     tokenizer.pad_token_id = tokenizer.eos_token_id
 
+    # Initialize model
     model = LlamaForCausalLM.from_pretrained(model_name)
-    model.load_state_dict(torch.load(model_path))
-    model.gradient_checkpointing_enable()  # Enable checkpointing here too
+
+    # Reinitialize DeepSpeed and Load the Checkpoint
+    model = deepspeed.initialize(
+        model=model,
+        config=ds_config
+    )[0]  # Get model from tuple
+
+    model.load_checkpoint(model_path)  # ✅ Load DeepSpeed checkpoint properly
     model.eval()  # Set to evaluation mode
-    print(f"Loaded fine-tuned model from {model_path}")
+
+    print(f"✅ Successfully loaded fine-tuned model from {model_path}")
     return model, tokenizer
 
 # Training function (no accelerate)
@@ -122,7 +129,7 @@ def train_model(model, tokenizer, train_loader):
         config=ds_config
     )
 
-    model = torch.compile(model)
+    # model = torch.compile(model)
     for epoch in range(1):
         total_loss = 0.0
         progress_bar = tqdm(train_loader, desc="Training", unit="batch")
@@ -163,10 +170,10 @@ def generate_answer(model, tokenizer, prompt, max_new_tokens=10):
     
     return new_text.strip()
 
-def evaluate(model, tokenizer, dataset):
+def evaluate(model, tokenizer, data_loader):
     correct, total = 0, 0
     sample_count = 0
-    for inp, tgt in tqdm(dataset, desc="Evaluating"):
+    for inp, tgt in tqdm(data_loader, desc="Evaluating"):
         generated_answer = generate_answer(model, tokenizer, inp)
         if generated_answer.lower() == tgt.lower():
             correct += 1
@@ -178,6 +185,9 @@ def evaluate(model, tokenizer, dataset):
 
 # Main
 if __name__ == "__main__":
+
+    deepspeed.init_distributed()
+
     train_path = "/workspace/O-LoRA/CL_Benchmark/TC/dbpedia/train.json"
     test_path = "/workspace/O-LoRA/CL_Benchmark/TC/dbpedia/test.json"
 
@@ -186,15 +196,27 @@ if __name__ == "__main__":
     train_dataset = DBpediaDataset(train_path, tokenizer)
     test_dataset = DBpediaDataset(test_path, tokenizer)
 
-    # # Reduce batch size to further alleviate OOM issues (from 8 to 2)
-    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True,
-                              collate_fn=lambda b: collate_fn(b, tokenizer))
+    train_sampler = DistributedSampler(train_dataset, shuffle=True)
+    train_loader = DataLoader(
+        train_dataset,
+        sampler=train_sampler,
+        batch_size=ds_config["train_micro_batch_size_per_gpu"],
+        collate_fn=lambda b: collate_fn(b, tokenizer)
+    )
 
     # Train
     train_model(model, tokenizer, train_loader)
     
     # Load the fine-tuned model before evaluation
-    model, tokenizer = load_finetuned_model("llama_finetuned_dbpedia.pt")
+    model, tokenizer = load_finetuned_model("llama_finetuned_dbpedia")
+
+    test_sampler = DistributedSampler(test_dataset, shuffle=False)
+    test_loader = DataLoader(
+        test_dataset,
+        sampler=test_sampler,
+        batch_size=ds_config["train_micro_batch_size_per_gpu"],
+        collate_fn=lambda b: collate_fn(b, tokenizer)
+    )
 
     # Evaluate
-    evaluate(model, tokenizer, test_dataset)
+    evaluate(model, tokenizer, test_loader)
