@@ -380,11 +380,11 @@ class LlamaWithSVD(LlamaForCausalLM):
         Before reinitialization, store a copy of the original weights for each target parameter,
         then after reinitialization, check and print the reconstruction error.
         """
-        # Save original weights for each parameter to be decomposed.
-        self._original_weights = {}
-        for orig_name in self.svd_config.keys():
-            # Retrieve from the model's state_dict; ensure it is on the correct device.
-            self._original_weights[orig_name] = self.state_dict()[orig_name].clone().to(device)
+        # # Save original weights for each parameter to be decomposed.
+        # self._original_weights = {}
+        # for orig_name in self.svd_config.keys():
+        #     # Retrieve from the model's state_dict; ensure it is on the correct device.
+        #     self._original_weights[orig_name] = self.state_dict()[orig_name].clone().to(device)
 
         # Clear previous SVD mappings.
         self.name_mapping = {}
@@ -394,19 +394,19 @@ class LlamaWithSVD(LlamaForCausalLM):
         # Reinitialize the SVD decomposition using the current weights.
         self._initialize_svd_parameters()
 
-        # Now, for each decomposed parameter, compute and print the reconstruction error.
-        for orig_name, safe_name in self.name_mapping.items():
-            orig_weight = self._original_weights[orig_name]
-            svd_dict = {
-                "U_high": getattr(self, f"{safe_name}_U_high"),
-                "S_high": getattr(self, f"{safe_name}_S_high"),
-                "V_high": getattr(self, f"{safe_name}_V_high"),
-                "U_low": self.svd_params[safe_name].U_low,
-                "S_low": self.svd_params[safe_name].S_low,
-                "V_low": self.svd_params[safe_name].V_low
-            }
-            error = check_reconstruction_error(orig_weight, svd_dict)
-            print(f"Reconstruction error for {orig_name}: {error:.2e}")
+        # # Now, for each decomposed parameter, compute and print the reconstruction error.
+        # for orig_name, safe_name in self.name_mapping.items():
+        #     orig_weight = self._original_weights[orig_name]
+        #     svd_dict = {
+        #         "U_high": getattr(self, f"{safe_name}_U_high"),
+        #         "S_high": getattr(self, f"{safe_name}_S_high"),
+        #         "V_high": getattr(self, f"{safe_name}_V_high"),
+        #         "U_low": self.svd_params[safe_name].U_low,
+        #         "S_low": self.svd_params[safe_name].S_low,
+        #         "V_low": self.svd_params[safe_name].V_low
+        #     }
+        #     error = check_reconstruction_error(orig_weight, svd_dict)
+        #     print(f"Reconstruction error for {orig_name}: {error:.2e}")
 
     def _initialize_svd_parameters(self):
         # Iterate over all parameters
