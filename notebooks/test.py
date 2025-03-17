@@ -207,7 +207,7 @@ if __name__ == "__main__":
     )
 
     # Train
-    # train_model(model, tokenizer, train_loader)
+    train_model(model, tokenizer, train_loader)
     
     # Load the fine-tuned model before evaluation
     model, tokenizer = load_finetuned_model("llama_finetuned_dbpedia")
