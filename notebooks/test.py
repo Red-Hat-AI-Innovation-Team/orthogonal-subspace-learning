@@ -173,7 +173,9 @@ def generate_answer(model, tokenizer, prompt, max_new_tokens=10):
 def evaluate(model, tokenizer, data_loader):
     correct, total = 0, 0
     sample_count = 0
-    for inp, tgt in tqdm(data_loader, desc="Evaluating"):
+    for inp_list, tgt_list in tqdm(data_loader, desc="Evaluating"):
+        inp = inp_list[0]  # unwrap the single item
+        tgt = tgt_list[0]
         generated_answer = generate_answer(model, tokenizer, inp)
         if generated_answer.lower() == tgt.lower():
             correct += 1
@@ -205,7 +207,7 @@ if __name__ == "__main__":
     )
 
     # Train
-    train_model(model, tokenizer, train_loader)
+    # train_model(model, tokenizer, train_loader)
     
     # Load the fine-tuned model before evaluation
     model, tokenizer = load_finetuned_model("llama_finetuned_dbpedia")
@@ -214,8 +216,8 @@ if __name__ == "__main__":
     test_loader = DataLoader(
         test_dataset,
         sampler=test_sampler,
-        batch_size=ds_config["train_micro_batch_size_per_gpu"],
-        collate_fn=lambda b: collate_fn(b, tokenizer)
+        batch_size=1,
+        # collate_fn=lambda b: collate_fn(b, tokenizer)
     )
 
     # Evaluate
