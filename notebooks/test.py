@@ -26,7 +26,7 @@ ds_config = {
     "optimizer": {
         "type": "AdamW",
         "params": {
-            "lr": 1e-5,
+            "lr": 1e-6,
             "betas": [0.9, 0.999],
             "eps": 1e-8,
             "weight_decay": 0.01
@@ -68,7 +68,7 @@ def collate_fn(batch, tokenizer, max_length=256):
     
     # Now create labels, but mask out the prompt tokens.
     # First, get the tokenized version of just the prompt.
-    prompt_texts = [inp for inp in inputs]
+    prompt_texts = [inp + " " for inp in inputs]
     prompt_encodings = tokenizer(
         prompt_texts, padding=True, truncation=True,
         max_length=max_length, return_tensors="pt"
@@ -85,7 +85,7 @@ def collate_fn(batch, tokenizer, max_length=256):
 
 # Load model and tokenizer (modified for one GPU only)
 def load_model():
-    model_name = "baffo32/decapoda-research-llama-7B-hf"
+    model_name = "meta-llama/Llama-2-7b-hf"
     tokenizer = LlamaTokenizer.from_pretrained(model_name)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -99,7 +99,7 @@ def load_finetuned_model(model_path="llama_finetuned_dbpedia"):
     """
     Correctly load the fine-tuned LLaMA model from a DeepSpeed checkpoint.
     """
-    model_name = "baffo32/decapoda-research-llama-7B-hf"
+    model_name = "meta-llama/Llama-2-7b-hf"
     tokenizer = LlamaTokenizer.from_pretrained(model_name)
     tokenizer.pad_token = tokenizer.eos_token  # Add padding token
     tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -124,7 +124,7 @@ def train_model(model, tokenizer, train_loader):
     model.train()
 
     # Initialize DeepSpeed
-    model, optimizer, _, _ = deepspeed.initialize(
+    model_engine, optimizer, _, _ = deepspeed.initialize(
         model=model, 
         config=ds_config
     )
@@ -134,13 +134,14 @@ def train_model(model, tokenizer, train_loader):
         total_loss = 0.0
         progress_bar = tqdm(train_loader, desc="Training", unit="batch")
         for batch in progress_bar:
+            model_engine.zero_grad()
             # Move batch to model's device (using the first parameter's device)
-            batch = {k: v.to(model.device) for k, v in batch.items()}  # Move batch to correct model device
+            batch = {k: v.to(model_engine.device) for k, v in batch.items()}  # Move batch to correct model device
 
-            outputs = model(**batch)
+            outputs = model_engine(**batch)
             loss = outputs.loss
-            model.backward(loss)
-            model.step()
+            model_engine.backward(loss)
+            model_engine.step()
 
             total_loss += loss.item()
             progress_bar.set_postfix(loss=loss.item())
@@ -149,7 +150,7 @@ def train_model(model, tokenizer, train_loader):
     
     # Save the trained model
     model_path = "llama_finetuned_dbpedia"
-    model.save_checkpoint(model_path)
+    model_engine.save_checkpoint(model_path)
     print(f"Model saved as '{model_path}'")
 
 def generate_answer(model, tokenizer, prompt, max_new_tokens=10):
