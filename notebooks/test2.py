@@ -45,7 +45,7 @@ ds_config = {
     "optimizer": {
         "type": "AdamW",
         "params": {
-            "lr": 1e-5,
+            "lr": 1e-6,
             "betas": [0.9, 0.999],
             "eps": 1e-8,
             "weight_decay": 0.01
@@ -422,7 +422,20 @@ class LlamaWithSVD(LlamaForCausalLM):
             if len(param.shape) == 2 and name in self.svd_config and self.svd_config[name] > 0:
                 top_k = self.svd_config[name]
                 print(f"[SVD Init] Decomposing {name} with top_k={top_k}")
-                svd_dict = decompose_weight_matrix(param.data, top_k=top_k)
+
+                # Move only the parameter data to GPU temporarily
+                param_gpu = param.data.to("cuda", non_blocking=True)  # ensure float32 for SVD
+                svd_dict = decompose_weight_matrix(param_gpu, top_k=top_k)
+                # Move results back to CPU and free GPU memory
+                svd_dict = {
+                    key: (svd_dict[key] if key == "rank_high" else svd_dict[key].to("cpu", non_blocking=True))
+                    for key in svd_dict
+                }
+                del param_gpu
+                torch.cuda.empty_cache()
+
+                # svd_dict = decompose_weight_matrix(param.data, top_k=top_k)
+
                 safe_name = name.replace(".", "_")
                 self.name_mapping[name] = safe_name
                 self.svd_original_mapping[safe_name] = name
@@ -439,9 +452,9 @@ class LlamaWithSVD(LlamaForCausalLM):
 
                 # Create a module to hold the low subspace trainable parameters
                 module_svd = nn.Module()
-                module_svd.U_low = nn.Parameter(svd_dict["U_low"])
-                module_svd.S_low = nn.Parameter(svd_dict["S_low"])
-                module_svd.V_low = nn.Parameter(svd_dict["V_low"])
+                module_svd.U_low = nn.Parameter(svd_dict["U_low"].contiguous())
+                module_svd.S_low = nn.Parameter(svd_dict["S_low"].contiguous())
+                module_svd.V_low = nn.Parameter(svd_dict["V_low"].contiguous())
                 module_svd.rank_high = svd_dict["rank_high"]
                 module_svd.safe_name = safe_name
                 self.svd_params[safe_name] = module_svd
@@ -556,10 +569,12 @@ def auto_generate_target_svd_config(model):
             # if top_k > full_rank:
             #     top_k = full_rank
             # config[name] = top_k
-            top_k = int(np.floor(max(param.shape)*0.70))
+            top_k = int(np.floor(max(param.shape)*0.25))
             full_rank = min(param.shape)
-            if top_k > full_rank:
-                top_k = full_rank
+            if top_k >= full_rank:
+                top_k = full_rank - 1
+            elif top_k <= 0:
+                continue  # skip because there's no "high" subspace
             config[name] = top_k
     # save_svd_config(config)
     return config
@@ -609,7 +624,7 @@ def collate_fn(batch, tokenizer, max_length=256):
     
     # Now create labels, but mask out the prompt tokens.
     # First, get the tokenized version of just the prompt.
-    prompt_texts = [inp for inp in inputs]
+    prompt_texts = [inp + " " for inp in inputs]
     prompt_encodings = tokenizer(
         prompt_texts, padding=True, truncation=True,
         max_length=max_length, return_tensors="pt"
@@ -683,7 +698,7 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
     # Use a prompt that indicates the dataset.
     dataset_prompt = fine_tune_dataset.lower()  # e.g., "dbpedia"
 
-    model_name = "baffo32/decapoda-research-llama-7B-hf"
+    model_name = "meta-llama/Llama-2-7b-hf"
     tokenizer = LlamaTokenizer.from_pretrained(model_name)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -695,7 +710,7 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
     test_dataset = GenericClassificationDataset(test_json_path, tokenizer, label_mapping, dataset_prompt)
 
     # Load a base LLaMA model to auto-generate the target SVD config.
-    base_model = LlamaWithSVD(config, svd_config={}, initialize_svd=True)
+    base_model = LlamaWithSVD(config, svd_config={}, initialize_svd=False)
     base_model.gradient_checkpointing_enable()
     target_svd_config = auto_generate_target_svd_config(base_model)
     print("Auto-generated target SVD config:")
@@ -706,7 +721,7 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
     base_model.svd_config = target_svd_config
     # Load pretrained weights into our SVD model.
     base_model.load_state_dict(AutoModelForCausalLM.from_pretrained("/workspace/orthogonal-subspace/notebooks/llama_finetuned_dbpedia/converted_model").state_dict(), strict=False)
-    # base_model.reinitialize_svd()
+    base_model.reinitialize_svd()
 
     # Use a distributed sampler for training
     train_sampler = DistributedSampler(train_dataset, shuffle=True)
@@ -726,7 +741,7 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
         config=ds_config
     )
 
-    model_engine.module.reinitialize_svd()
+    # model_engine.module.reinitialize_svd()
 
     # optimizer = optim.AdamW(model.parameters(), lr=1e-5)
     num_epochs = 1  # adjust as needed
@@ -755,16 +770,21 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
             remaining_time = elapsed_time / (progress_bar.n + 1) * (len(train_loader) - progress_bar.n)
             progress_bar.set_postfix(loss=f"{loss.item():.4f}", eta=f"{remaining_time:.2f}s")
 
+            del outputs
+            del loss
+            torch.cuda.empty_cache()
+
         avg_loss = total_loss / len(train_loader)
         print(f"Epoch {epoch+1}/{num_epochs} - Average Loss: {avg_loss:.4f}")
 
     # Save the fine-tuned model (with SVD modifications)
     # torch.save(model.state_dict(), output_model_name)
+    torch.cuda.empty_cache()
     model_engine.save_checkpoint(output_model_name)
     print(f"Model saved as '{output_model_name}'")
     return model_engine, tokenizer, train_dataset, test_dataset
 
-def generate_answer(model, tokenizer, prompt, max_new_tokens=10):
+def generate_answer(model, tokenizer, prompt, max_new_tokens=8):
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
     outputs = model.generate(
         input_ids,
@@ -774,32 +794,42 @@ def generate_answer(model, tokenizer, prompt, max_new_tokens=10):
     new_token_ids = outputs.sequences[:, input_ids.shape[-1]:]
     return tokenizer.decode(new_token_ids[0], skip_special_tokens=True).strip()
 
-def simple_collate(batch):
-    # Each item is a tuple: (input_text, target_text)
-    inputs, targets = zip(*batch)
-    return list(inputs), list(targets)
+def evaluate(model, tokenizer, dataset):
+    # Create a DistributedSampler so each GPU processes a distinct part of the dataset.
+    sampler = DistributedSampler(dataset, shuffle=False)
+    data_loader = DataLoader(dataset, batch_size=1, sampler=sampler, collate_fn=lambda batch: zip(*batch))
 
-def evaluate(model, tokenizer, dataset, batch_size=1):
-    from torch.utils.data import DataLoader
-    from tqdm import tqdm
+    local_correct = 0
+    local_total = 0
+    sample_print_count = 0
 
-    data_loader = DataLoader(dataset, batch_size=batch_size, collate_fn=simple_collate)
-    correct, total = 0, 0
-    sample_count = 0
+    model.eval()
+    with torch.no_grad():
+        for inputs, targets in tqdm(data_loader, desc="Evaluating", disable=(dist.get_rank() != 0)):
+            # With batch_size=1, extract the single prompt and target.
+            prompt = list(inputs)[0] + " "
+            target = list(targets)[0]
+            generated = generate_answer(model, tokenizer, prompt)
+            if generated.lower() == target.lower():
+                local_correct += 1
+            local_total += 1
+            if sample_print_count < 5 and dist.get_rank() == 0:
+                with open("output.txt", "a") as f:  # "a" mode appends to the file
+                    print(f"[Target: {target.lower()} | Prediction: {generated.lower()}]", file=f)
+                sample_print_count += 1
 
-    for inputs, targets in tqdm(data_loader, desc="Evaluating"):
-        # With batch_size=1, simply take the first element.
-        prompt = inputs[0]
-        target = targets[0]
-        generated = generate_answer(model, tokenizer, prompt)
-        if generated.lower() == target.lower():
-            correct += 1
-        if sample_count < 5:
-            print(f"[Target: {target.strip()} | Prediction: {generated.strip()}]")
-            sample_count += 1
-        total += 1
+    # Synchronize ranks before collective operation.
+    dist.barrier()
 
-    print(f"Accuracy: {100.0 * correct / total:.2f}%")
+    # Gather results from all GPUs.
+    local_correct_tensor = torch.tensor(local_correct, device=model.device)
+    local_total_tensor = torch.tensor(local_total, device=model.device)
+    dist.all_reduce(local_correct_tensor, op=dist.ReduceOp.SUM)
+    dist.all_reduce(local_total_tensor, op=dist.ReduceOp.SUM)
+
+    if dist.get_rank() == 0:
+        accuracy = 100.0 * local_correct_tensor.item() / local_total_tensor.item() if local_total_tensor.item() > 0 else 0
+        print(f"Accuracy: {accuracy:.2f}%")
 
 def evaluate_on_all_tasks(
     model_checkpoint_dir,  # folder where your DS checkpoint is stored
@@ -931,3 +961,5 @@ if __name__ == "__main__":
 
     # 4) Optionally evaluate on all tasks
     # evaluate_on_all_tasks(OUTPUT_MODEL_NAME, DATASET_INFOS)
+
+    dist.destroy_process_group()
