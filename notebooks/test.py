@@ -105,7 +105,7 @@ def load_finetuned_model(model_path="llama_finetuned_dbpedia"):
     tokenizer.pad_token_id = tokenizer.eos_token_id
 
     # Initialize model
-    model = LlamaForCausalLM.from_pretrained(model_name)
+    model = LlamaForCausalLM.from_pretrained(f"/workspace/orthogonal-subspace/notebooks/{model_path}/converted_model")
 
     # Reinitialize DeepSpeed and Load the Checkpoint
     model = deepspeed.initialize(
@@ -180,7 +180,8 @@ def evaluate(model, tokenizer, data_loader):
         if generated_answer.lower() == tgt.lower():
             correct += 1
         if sample_count < 5:
-            print(f"[Target: {tgt.strip()} | Prediction: {generated_answer.strip()}]")
+            with open("output.txt", "a") as f:  # "a" mode appends to the file
+                print(f"[Target: {tgt.strip()} | Prediction: {generated_answer.strip()}]", file=f)
             sample_count += 1
         total += 1
     print(f"Accuracy: {100.0 * correct / total:.2f}%")
@@ -191,12 +192,10 @@ if __name__ == "__main__":
     deepspeed.init_distributed()
 
     train_path = "/workspace/O-LoRA/CL_Benchmark/TC/dbpedia/train.json"
-    test_path = "/workspace/O-LoRA/CL_Benchmark/TC/dbpedia/test.json"
 
     model, tokenizer = load_model()
 
     train_dataset = DBpediaDataset(train_path, tokenizer)
-    test_dataset = DBpediaDataset(test_path, tokenizer)
 
     train_sampler = DistributedSampler(train_dataset, shuffle=True)
     train_loader = DataLoader(
@@ -208,10 +207,13 @@ if __name__ == "__main__":
 
     # Train
     train_model(model, tokenizer, train_loader)
+
+    test_path = "/workspace/O-LoRA/CL_Benchmark/TC/dbpedia/test.json"
     
     # Load the fine-tuned model before evaluation
     model, tokenizer = load_finetuned_model("llama_finetuned_dbpedia")
 
+    test_dataset = DBpediaDataset(test_path, tokenizer)
     test_sampler = DistributedSampler(test_dataset, shuffle=False)
     test_loader = DataLoader(
         test_dataset,
