@@ -85,7 +85,7 @@ def collate_fn(batch, tokenizer, max_length=256):
 
 # Load model and tokenizer (modified for one GPU only)
 def load_model():
-    model_name = "meta-llama/Llama-2-7b-hf"
+    model_name = "baffo32/decapoda-research-llama-7B-hf"
     tokenizer = LlamaTokenizer.from_pretrained(model_name)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -99,7 +99,7 @@ def load_finetuned_model(model_path="llama_finetuned_dbpedia"):
     """
     Correctly load the fine-tuned LLaMA model from a DeepSpeed checkpoint.
     """
-    model_name = "meta-llama/Llama-2-7b-hf"
+    model_name = "baffo32/decapoda-research-llama-7B-hf"
     tokenizer = LlamaTokenizer.from_pretrained(model_name)
     tokenizer.pad_token = tokenizer.eos_token  # Add padding token
     tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -140,6 +140,10 @@ def train_model(model, tokenizer, train_loader):
 
             outputs = model_engine(**batch)
             loss = outputs.loss
+
+            with open("loss.txt", "a") as f:  # "a" mode appends to the file
+                print(f"Loss: {loss}", file=f)
+
             model_engine.backward(loss)
             model_engine.step()
 
@@ -175,7 +179,7 @@ def evaluate(model, tokenizer, data_loader):
     correct, total = 0, 0
     sample_count = 0
     for inp_list, tgt_list in tqdm(data_loader, desc="Evaluating"):
-        inp = inp_list[0]  # unwrap the single item
+        inp = inp_list[0] + " "  # unwrap the single item
         tgt = tgt_list[0]
         generated_answer = generate_answer(model, tokenizer, inp)
         if generated_answer.lower() == tgt.lower():
