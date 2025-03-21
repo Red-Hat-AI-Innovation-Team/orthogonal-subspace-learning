@@ -698,7 +698,7 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
     # Use a prompt that indicates the dataset.
     dataset_prompt = fine_tune_dataset.lower()  # e.g., "dbpedia"
 
-    model_name = "meta-llama/Llama-2-7b-hf"
+    model_name = "baffo32/decapoda-research-llama-7B-hf"
     tokenizer = LlamaTokenizer.from_pretrained(model_name)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -737,7 +737,6 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
     # Prepare model for DeepSpeed
     model_engine, optimizer, _, _ = deepspeed.initialize(
         model=base_model,
-        model_parameters=trainable_params,  # or filter only your SVD params, if needed
         config=ds_config
     )
 
@@ -759,6 +758,9 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
                 batch[key] = val.to(model_engine.device)
             outputs = model_engine(**batch, use_cache=False)
             loss = outputs.loss
+
+            with open("loss.txt", "a") as f:  # "a" mode appends to the file
+                print(f"Loss: {loss}", file=f)
 
             model_engine.zero_grad()
             model_engine.backward(loss)
