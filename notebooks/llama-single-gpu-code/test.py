@@ -27,11 +27,12 @@ class DBpediaDataset(Dataset):
     def __getitem__(self, idx):
         sample = self.dataset[idx]
         input_text = (
-            "Classify the following text into one of these categories: "
-            "[Company, Educational Institution, Artist, Athlete, Office Holder, "
-            "Mean of Transportation, Building, Natural Place, Village, Animal, "
-            "Plant, Album, Film, Written Work].\n\n"
-            "Text: " + sample["sentence"] + "\nAnswer:"
+            "Task: TC\n"
+            "Dataset: dbpedia\n"
+            "What is the topic of the following paragraph? Choose one from the option.\n"
+            "Option: Company, Educational Institution, Artist, Athlete, Office Holder, "
+            "Mean of Transportation, Building, Natural Place, Village, Animal, Plant, "
+            "Album, Film, Written Work\n" + sample['sentence'] + "Answer: "
         )
         target_text = sample["label"]
         return input_text, target_text
@@ -40,38 +41,39 @@ class DBpediaDataset(Dataset):
 def collate_fn(batch, tokenizer, max_length=256):
     inputs, targets = zip(*batch)
     # Create full texts: prompt + " " + target
-    full_texts = [inp + " " + tgt for inp, tgt in zip(inputs, targets)]
+    full_texts = [inp + tgt + tokenizer.eos_token for inp, tgt in zip(inputs, targets)]
     encodings = tokenizer(
         full_texts, padding=True, truncation=True,
         max_length=max_length, return_tensors="pt"
     )
     
-    # Now create labels, but mask out the prompt tokens.
-    # First, get the tokenized version of just the prompt.
-    prompt_texts = [inp for inp in inputs]
-    prompt_encodings = tokenizer(
-        prompt_texts, padding=True, truncation=True,
-        max_length=max_length, return_tensors="pt"
-    )
+    # # Now create labels, but mask out the prompt tokens.
+    # # First, get the tokenized version of just the prompt.
+    # prompt_texts = [inp for inp in inputs]
+    # prompt_encodings = tokenizer(
+    #     prompt_texts, padding=True, truncation=True,
+    #     max_length=max_length, return_tensors="pt"
+    # )
     labels = encodings["input_ids"].clone()
     
-    # For each sample, set label tokens corresponding to the prompt to -100.
-    for i in range(len(full_texts)):
-        prompt_length = prompt_encodings["input_ids"][i].ne(tokenizer.pad_token_id).sum()
-        # Set all tokens up to prompt_length to -100 so loss isn't computed on them
-        labels[i, :prompt_length] = -100
+    # # For each sample, set label tokens corresponding to the prompt to -100.
+    # for i in range(len(full_texts)):
+    #     prompt_length = prompt_encodings["input_ids"][i].ne(tokenizer.pad_token_id).sum()
+    #     # Set all tokens up to prompt_length to -100 so loss isn't computed on them
+    #     labels[i, :prompt_length] = -100
+    labels[encodings["attention_mask"] == 0] = -100
     encodings["labels"] = labels
     return encodings
 
 # Load model and tokenizer (modified for one GPU only)
 def load_model():
-    model_name = "baffo32/decapoda-research-llama-7B-hf"
+    model_name = "meta-llama/Llama-2-7b-hf"
     tokenizer = LlamaTokenizer.from_pretrained(model_name)
-    tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.pad_token_id = tokenizer.eos_token_id
+    tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
     # Load model with BF16 and enable gradient checkpointing for memory savings
     model = LlamaForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
+    model.resize_token_embeddings(len(tokenizer))
     model.gradient_checkpointing_enable()  # Save memory during backpropagation
     model.to("cuda:0")  # Force model to GPU 0
     return model, tokenizer
@@ -80,12 +82,12 @@ def load_finetuned_model(model_path="llama_finetuned_dbpedia.pt"):
     """
     Load the fine-tuned LLaMA model from disk.
     """
-    model_name = "baffo32/decapoda-research-llama-7B-hf"
+    model_name = "meta-llama/Llama-2-7b-hf"
     tokenizer = LlamaTokenizer.from_pretrained(model_name)
-    tokenizer.pad_token = tokenizer.eos_token  # Add padding token
-    tokenizer.pad_token_id = tokenizer.eos_token_id
+    tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
-    model = LlamaForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
+    model = LlamaForCausalLM.from_pretrained(model_name)
+    model.resize_token_embeddings(len(tokenizer))
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.gradient_checkpointing_enable()  # Enable checkpointing here too
     model.to("cuda:0")  # Force model to GPU 0
@@ -112,6 +114,9 @@ def train_model(model, tokenizer, train_loader):
             loss.backward()  # Backpropagation
             optimizer.step()
 
+            with open("loss.txt", "a") as f:  # "a" mode appends to the file
+                print(f"Loss: {loss}", file=f)
+
             total_loss += loss.item()
             progress_bar.set_postfix(loss=loss.item())
             torch.cuda.empty_cache()  # Optionally clear cache after each batch
@@ -129,7 +134,8 @@ def generate_answer(model, tokenizer, prompt, max_new_tokens=10):
     # Generate tokens starting from the prompt
     outputs = model.generate(
         input_ids, 
-        max_new_tokens=max_new_tokens, 
+        max_new_tokens=max_new_tokens,
+        eos_token_id=tokenizer.eos_token_id,
         return_dict_in_generate=True
     )
     
@@ -143,14 +149,12 @@ def generate_answer(model, tokenizer, prompt, max_new_tokens=10):
 
 def evaluate(model, tokenizer, dataset):
     correct, total = 0, 0
-    sample_count = 0
     for inp, tgt in tqdm(dataset, desc="Evaluating"):
         generated_answer = generate_answer(model, tokenizer, inp)
         if generated_answer.lower() == tgt.lower():
             correct += 1
-        if sample_count < 5:
-            print(f"[Target: {tgt.strip()} | Prediction: {generated_answer.strip()}]")
-            sample_count += 1
+        with open("output.txt", "a") as f:  # "a" mode appends to the file
+            print(f"[Target: {tgt.lower()} | Prediction: {generated_answer.lower()}]", file=f)
         total += 1
     print(f"Accuracy: {100.0 * correct / total:.2f}%")
 
@@ -164,7 +168,7 @@ if __name__ == "__main__":
     train_dataset = DBpediaDataset(train_path, tokenizer)
     test_dataset = DBpediaDataset(test_path, tokenizer)
 
-    # # Reduce batch size to further alleviate OOM issues (from 8 to 2)
+    # Reduce batch size to further alleviate OOM issues (from 8 to 2)
     train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True,
                               collate_fn=lambda b: collate_fn(b, tokenizer))
 
