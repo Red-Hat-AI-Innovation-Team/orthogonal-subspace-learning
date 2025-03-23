@@ -16,13 +16,12 @@ from transformers import LlamaTokenizer, LlamaForCausalLM, LlamaConfig
 from datasets import load_dataset, concatenate_datasets
 from tqdm import tqdm
 import numpy as np
+from accelerate import load_checkpoint_and_dispatch
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 torch.autograd.set_detect_anomaly(True)
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 ####################################################################
 # Define Dataset Information
@@ -99,10 +98,6 @@ def construct_prompt(sample, dataset_name):
     dataset_name = dataset_name.lower()
     if dataset_name == "agnews":
         return (
-            "Classify the following text into one of these categories: "
-            "[World, Sports, Business, Science or Technology].\n\n"
-            "Text: " + sample["text"] + "\nAnswer:"
-
             "Task: TC\n"
             "Dataset: ag news\n"
             "What is the topic of the following paragraph? Choose one from the option.\n"
@@ -364,11 +359,11 @@ class LlamaWithSVD(LlamaForCausalLM):
         Before reinitialization, store a copy of the original weights for each target parameter,
         then after reinitialization, check and print the reconstruction error.
         """
-        # Save original weights for each parameter to be decomposed.
-        self._original_weights = {}
-        for orig_name in self.svd_config.keys():
-            # Retrieve from the model's state_dict; ensure it is on the correct device.
-            self._original_weights[orig_name] = self.state_dict()[orig_name].clone().to(device)
+        # # Save original weights for each parameter to be decomposed.
+        # self._original_weights = {}
+        # for orig_name in self.svd_config.keys():
+        #     # Retrieve from the model's state_dict; ensure it is on the correct device.
+        #     self._original_weights[orig_name] = self.state_dict()[orig_name].clone().to(device)
 
         # Clear previous SVD mappings.
         self.name_mapping = {}
@@ -378,19 +373,19 @@ class LlamaWithSVD(LlamaForCausalLM):
         # Reinitialize the SVD decomposition using the current weights.
         self._initialize_svd_parameters()
 
-        # Now, for each decomposed parameter, compute and print the reconstruction error.
-        for orig_name, safe_name in self.name_mapping.items():
-            orig_weight = self._original_weights[orig_name]
-            svd_dict = {
-                "U_high": getattr(self, f"{safe_name}_U_high"),
-                "S_high": getattr(self, f"{safe_name}_S_high"),
-                "V_high": getattr(self, f"{safe_name}_V_high"),
-                "U_low": self.svd_params[safe_name].U_low,
-                "S_low": self.svd_params[safe_name].S_low,
-                "V_low": self.svd_params[safe_name].V_low
-            }
-            error = check_reconstruction_error(orig_weight, svd_dict)
-            print(f"Reconstruction error for {orig_name}: {error:.2e}")
+        # # Now, for each decomposed parameter, compute and print the reconstruction error.
+        # for orig_name, safe_name in self.name_mapping.items():
+        #     orig_weight = self._original_weights[orig_name]
+        #     svd_dict = {
+        #         "U_high": getattr(self, f"{safe_name}_U_high"),
+        #         "S_high": getattr(self, f"{safe_name}_S_high"),
+        #         "V_high": getattr(self, f"{safe_name}_V_high"),
+        #         "U_low": self.svd_params[safe_name].U_low,
+        #         "S_low": self.svd_params[safe_name].S_low,
+        #         "V_low": self.svd_params[safe_name].V_low
+        #     }
+        #     error = check_reconstruction_error(orig_weight, svd_dict)
+        #     print(f"Reconstruction error for {orig_name}: {error:.2e}")
 
     def _initialize_svd_parameters(self):
         # Iterate over all parameters
@@ -583,20 +578,20 @@ def collate_fn(batch, tokenizer, max_length=256):
         max_length=max_length, return_tensors="pt"
     )
     
-    # Now create labels, but mask out the prompt tokens.
-    # First, get the tokenized version of just the prompt.
-    prompt_texts = [inp for inp in inputs]
-    prompt_encodings = tokenizer(
-        prompt_texts, padding=True, truncation=True,
-        max_length=max_length, return_tensors="pt"
-    )
+    # # Now create labels, but mask out the prompt tokens.
+    # # First, get the tokenized version of just the prompt.
+    # prompt_texts = [inp for inp in inputs]
+    # prompt_encodings = tokenizer(
+    #     prompt_texts, padding=True, truncation=True,
+    #     max_length=max_length, return_tensors="pt"
+    # )
     labels = encodings["input_ids"].clone()
     
-    # For each sample, set label tokens corresponding to the prompt to -100.
-    for i in range(len(full_texts)):
-        prompt_length = prompt_encodings["input_ids"][i].ne(tokenizer.pad_token_id).sum()
-        # Set all tokens up to prompt_length to -100 so loss isn't computed on them
-        labels[i, :prompt_length] = -100
+    # # For each sample, set label tokens corresponding to the prompt to -100.
+    # for i in range(len(full_texts)):
+    #     prompt_length = prompt_encodings["input_ids"][i].ne(tokenizer.pad_token_id).sum()
+    #     # Set all tokens up to prompt_length to -100 so loss isn't computed on them
+    #     labels[i, :prompt_length] = -100
     labels[encodings["attention_mask"] == 0] = -100
     encodings["labels"] = labels
     return encodings
@@ -675,24 +670,22 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
     train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True,
                               collate_fn=lambda batch: collate_fn(batch, tokenizer))
     # Load a base LLaMA model to auto-generate the target SVD config.
-    base_model = LlamaWithSVD(config, svd_config={}, initialize_svd=False)
-    base_model.resize_token_embeddings(len(tokenizer))
-    base_model.load_state_dict(torch.load(starting_checkpoint, map_location=device), strict=False)
-    base_model = base_model.to(device, dtype=torch.bfloat16)
-    base_model.gradient_checkpointing_enable()
+    base_model = LlamaForCausalLM.from_pretrained(model_name, device_map="auto")
     target_svd_config = auto_generate_target_svd_config(base_model)
     # target_svd_config = auto_generate_target_svd_config(base_model, tokenizer)
     print("Auto-generated target SVD config:")
     for k, v in target_svd_config.items():
         print(f"  {k}: freeze top {v} singular vectors")
+    
+    del base_model
+    torch.cuda.empty_cache()
 
     # Initialize our custom SVD model with target_svd_config.
     model = LlamaWithSVD(config, svd_config=target_svd_config, initialize_svd=False)
-    model.load_state_dict(torch.load(starting_checkpoint, map_location=device), strict=False)
     # Load pretrained weights into our SVD model.
-    model.load_state_dict(torch.load(starting_checkpoint, map_location=device), strict=False)
+    model = load_checkpoint_and_dispatch(model, checkpoint=starting_checkpoint, device_map="auto", strict=False)
+    model.resize_token_embeddings(len(tokenizer))
     model.reinitialize_svd()
-    model = model.to(device, dtype=torch.bfloat16)
     model.gradient_checkpointing_enable()
 
     optimizer = optim.AdamW(model.parameters(), lr=1e-6)
@@ -705,8 +698,9 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
         start_time = time.time()
 
         for batch in progress_bar:
+            first_param_device = next(model.parameters()).device
             for key, val in batch.items():
-                batch[key] = val.to(device)
+                batch[key] = val.to(first_param_device)
             outputs = model(**batch, use_cache=False)
             loss = outputs.loss
 
@@ -736,7 +730,7 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
 ###################################################
 def generate_answer(model, tokenizer, prompt, max_new_tokens=10):
     # Tokenize only the prompt (without the target)
-    input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
+    input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(next(model.parameters()).device)
     # Generate tokens starting from the prompt
     outputs = model.generate(
         input_ids, 
@@ -845,9 +839,8 @@ if __name__ == "__main__":
     # Initialize the model with the same SVD config used in training
     model = LlamaWithSVD(config, svd_config={}, initialize_svd=False)
     model.resize_token_embeddings(len(tokenizer))
-    model.load_state_dict(torch.load(OUTPUT_MODEL_NAME, map_location=device), strict=False)
+    model.load_state_dict(torch.load(OUTPUT_MODEL_NAME), strict=False)
     model.reinitialize_svd()
-    model = model.to(device, dtype=torch.bfloat16)
     model.gradient_checkpointing_enable()
     model.eval()
     
