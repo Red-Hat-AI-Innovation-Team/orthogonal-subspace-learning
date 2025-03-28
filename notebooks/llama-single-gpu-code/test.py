@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
-from transformers import LlamaForCausalLM, LlamaTokenizer, BitsAndBytesConfig
+from transformers import LlamaForCausalLM, LlamaTokenizer, LlamaConfig
 from tqdm import tqdm
 import json
 import os
@@ -32,35 +32,53 @@ class DBpediaDataset(Dataset):
             "What is the topic of the following paragraph? Choose one from the option.\n"
             "Option: Company, Educational Institution, Artist, Athlete, Office Holder, "
             "Mean of Transportation, Building, Natural Place, Village, Animal, Plant, "
-            "Album, Film, Written Work\n" + sample['sentence'] + "Answer: "
+            "Album, Film, Written Work\n" + sample['sentence'] + "Assistant:"
+
+            # "Task: SC\n"
+            # "Dataset: amazon\n"
+            # "What is the sentiment of the following paragraph? Choose one from the option.\n"
+            # "Option: very negative, negative, neutral, positive, very positive\n" + sample['sentence'] + "Sentiment:"
+
+            # "Task: TC\n"
+            # "Dataset: yahoo\n"
+            # "What is the topic of the following paragraph? Choose one from the option.\n"
+            # "Option: Society & Culture, Science & Mathematics, Health, Education & Reference, "
+            # "Computers & Internet, Sports, Business & Finance, Entertainment & Music, "
+            # "Family & Relationships, Politics & Government\n" + sample['sentence'] + "Assistant:"
+
+            # "Task: TC\n"
+            # "Dataset: ag news\n"
+            # "What is the topic of the following paragraph? Choose one from the option.\n"
+            # "Option: World, Sports, Business, Science or Technology\n" + sample['sentence'] + "Assistant:"
+
         )
         target_text = sample["label"]
         return input_text, target_text
 
 # Collate function with reduced max_length (optional)
-def collate_fn(batch, tokenizer, max_length=256):
+def collate_fn(batch, tokenizer, max_length=1024):
     inputs, targets = zip(*batch)
     # Create full texts: prompt + " " + target
-    full_texts = [inp + tgt + tokenizer.eos_token for inp, tgt in zip(inputs, targets)]
+    full_texts = [inp + " " + tgt + tokenizer.eos_token for inp, tgt in zip(inputs, targets)]
     encodings = tokenizer(
         full_texts, padding=True, truncation=True,
         max_length=max_length, return_tensors="pt"
     )
     
-    # # Now create labels, but mask out the prompt tokens.
-    # # First, get the tokenized version of just the prompt.
-    # prompt_texts = [inp for inp in inputs]
-    # prompt_encodings = tokenizer(
-    #     prompt_texts, padding=True, truncation=True,
-    #     max_length=max_length, return_tensors="pt"
-    # )
+    # Now create labels, but mask out the prompt tokens.
+    # First, get the tokenized version of just the prompt.
+    prompt_texts = [inp for inp in inputs]
+    prompt_encodings = tokenizer(
+        prompt_texts, padding=True, truncation=True,
+        max_length=max_length, return_tensors="pt"
+    )
     labels = encodings["input_ids"].clone()
     
-    # # For each sample, set label tokens corresponding to the prompt to -100.
-    # for i in range(len(full_texts)):
-    #     prompt_length = prompt_encodings["input_ids"][i].ne(tokenizer.pad_token_id).sum()
-    #     # Set all tokens up to prompt_length to -100 so loss isn't computed on them
-    #     labels[i, :prompt_length] = -100
+    # For each sample, set label tokens corresponding to the prompt to -100.
+    for i in range(len(full_texts)):
+        prompt_length = prompt_encodings["input_ids"][i].ne(tokenizer.pad_token_id).sum()
+        # Set all tokens up to prompt_length to -100 so loss isn't computed on them
+        labels[i, :prompt_length] = -100
     labels[encodings["attention_mask"] == 0] = -100
     encodings["labels"] = labels
     return encodings
@@ -70,9 +88,12 @@ def load_model():
     model_name = "meta-llama/Llama-2-7b-hf"
     tokenizer = LlamaTokenizer.from_pretrained(model_name)
     tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+    config = LlamaConfig.from_pretrained(model_name)
+    config.attention_dropout = 0.2
+    config.hidden_dropout = 0.2
 
     # Load model with BF16 and enable gradient checkpointing for memory savings
-    model = LlamaForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
+    model = LlamaForCausalLM.from_pretrained(model_name, config=config, torch_dtype=torch.bfloat16)
     model.resize_token_embeddings(len(tokenizer))
     model.gradient_checkpointing_enable()  # Save memory during backpropagation
     model.to("cuda:0")  # Force model to GPU 0
@@ -85,6 +106,9 @@ def load_finetuned_model(model_path="llama_finetuned_dbpedia.pt"):
     model_name = "meta-llama/Llama-2-7b-hf"
     tokenizer = LlamaTokenizer.from_pretrained(model_name)
     tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+    config = LlamaConfig.from_pretrained(model_name)
+    config.attention_dropout = 0.2
+    config.hidden_dropout = 0.2
 
     model = LlamaForCausalLM.from_pretrained(model_name)
     model.resize_token_embeddings(len(tokenizer))
@@ -97,7 +121,7 @@ def load_finetuned_model(model_path="llama_finetuned_dbpedia.pt"):
 
 # Training function (no accelerate)
 def train_model(model, tokenizer, train_loader):
-    optimizer = optim.AdamW(model.parameters(), lr=1e-5)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-5, betas=(0.9, 0.999), weight_decay=0.01)
     model.train()
     for epoch in range(1):
         total_loss = 0.0
@@ -112,6 +136,7 @@ def train_model(model, tokenizer, train_loader):
             loss = outputs.loss
             optimizer.zero_grad()
             loss.backward()  # Backpropagation
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             with open("loss.txt", "a") as f:  # "a" mode appends to the file
@@ -171,6 +196,13 @@ if __name__ == "__main__":
     # Reduce batch size to further alleviate OOM issues (from 8 to 2)
     train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True,
                               collate_fn=lambda b: collate_fn(b, tokenizer))
+
+    # for batch in train_loader:
+    #     print("Input IDs:", tokenizer.decode(batch['input_ids'][0]))
+    #     print("Labels:", tokenizer.decode([x for x in batch['labels'][0] if x != -100]))
+    #     # print(batch['input_ids'][0])
+    #     # print(batch['labels'][0])
+    #     break
 
     # Train
     train_model(model, tokenizer, train_loader)

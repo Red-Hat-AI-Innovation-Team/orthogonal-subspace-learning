@@ -1,8 +1,8 @@
 # Configurable parameters:
-SOURCE_SVD_DATASET = "dbpedia"       # Dataset to use when computing the adaptive SVD config.
-FINE_TUNE_DATASET = "amazon"       # Fine-tuning dataset; options: "agnews", "amazon", "yelp", "dbpedia", "yahoo"
-STARTING_CHECKPOINT = "llama_finetuned_dbpedia.pt"  # Path to the checkpoint you want to start from.
-OUTPUT_MODEL_NAME = "llama_svd_amazon.pt"         # Name for the saved model after fine-tuning.
+SOURCE_SVD_DATASET = "yahoo"       # Dataset to use when computing the adaptive SVD config.
+FINE_TUNE_DATASET = "agnews"       # Fine-tuning dataset; options: "agnews", "amazon", "yelp", "dbpedia", "yahoo"
+STARTING_CHECKPOINT = "llama_svd_yahoo.pt"  # Path to the checkpoint you want to start from.
+OUTPUT_MODEL_NAME = "llama_svd_agnews.pt"         # Name for the saved model after fine-tuning.
 
 import os
 import json
@@ -102,14 +102,14 @@ def construct_prompt(sample, dataset_name):
             "Task: TC\n"
             "Dataset: ag news\n"
             "What is the topic of the following paragraph? Choose one from the option.\n"
-            "Option: World, Sports, Business, Science or Technology\n" + sample['text'] + "Answer: "
+            "Option: World, Sports, Business, Science or Technology\n" + sample['text'] + "Assistant:"
         )
     elif dataset_name in ["amazon", "yelp"]:
         return (
             "Task: SC\n"
             "Dataset: amazon\n"
             "What is the sentiment of the following paragraph? Choose one from the option.\n"
-            "Option: very negative, negative, neutral, positive, very positive\n" + sample['text'] + "Answer: "
+            "Option: very negative, negative, neutral, positive, very positive\n" + sample['text'] + "Sentiment:"
         )
     elif dataset_name == "dbpedia":
         return (
@@ -118,7 +118,7 @@ def construct_prompt(sample, dataset_name):
             "What is the topic of the following paragraph? Choose one from the option.\n"
             "Option: Company, Educational Institution, Artist, Athlete, Office Holder, "
             "Mean of Transportation, Building, Natural Place, Village, Animal, Plant, "
-            "Album, Film, Written Work\n" + sample['text'] + "Answer: "
+            "Album, Film, Written Work\n" + sample['text'] + "Assistant:"
         )
     elif dataset_name == "yahoo":
         return (
@@ -127,7 +127,7 @@ def construct_prompt(sample, dataset_name):
             "What is the topic of the following paragraph? Choose one from the option.\n"
             "Option: Society & Culture, Science & Mathematics, Health, Education & Reference, "
             "Computers & Internet, Sports, Business & Finance, Entertainment & Music, "
-            "Family & Relationships, Politics & Government\n" + sample['text'] + "Answer: "
+            "Family & Relationships, Politics & Government\n" + sample['text'] + "Assistant:"
         )
     elif dataset_name == "mnli":
         # return "classify mnli dataset: premise: " + sample["premise"] + " hypothesis: " + sample["hypothesis"]
@@ -530,7 +530,7 @@ def auto_generate_target_svd_config(model):
             # if top_k > full_rank:
             #     top_k = full_rank
             # config[name] = top_k
-            top_k = int(np.floor(max(param.shape)*0.25))
+            top_k = int(np.floor(max(param.shape)*0.75))
             full_rank = min(param.shape)
             if top_k > full_rank:
                 top_k = full_rank
@@ -572,29 +572,29 @@ class GenericClassificationDataset(Dataset):
         input_text = construct_prompt(sample, self.dataset_name)
         return input_text, sample["label"]
 
-def collate_fn(batch, tokenizer, max_length=256):
+def collate_fn(batch, tokenizer, max_length=1024):
     inputs, targets = zip(*batch)
     # Create full texts: prompt + " " + target
-    full_texts = [inp + tgt + tokenizer.eos_token for inp, tgt in zip(inputs, targets)]
+    full_texts = [inp + " " + tgt + tokenizer.eos_token for inp, tgt in zip(inputs, targets)]
     encodings = tokenizer(
         full_texts, padding=True, truncation=True,
         max_length=max_length, return_tensors="pt"
     )
     
-    # # Now create labels, but mask out the prompt tokens.
-    # # First, get the tokenized version of just the prompt.
-    # prompt_texts = [inp for inp in inputs]
-    # prompt_encodings = tokenizer(
-    #     prompt_texts, padding=True, truncation=True,
-    #     max_length=max_length, return_tensors="pt"
-    # )
+    # Now create labels, but mask out the prompt tokens.
+    # First, get the tokenized version of just the prompt.
+    prompt_texts = [inp for inp in inputs]
+    prompt_encodings = tokenizer(
+        prompt_texts, padding=True, truncation=True,
+        max_length=max_length, return_tensors="pt"
+    )
     labels = encodings["input_ids"].clone()
     
-    # # For each sample, set label tokens corresponding to the prompt to -100.
-    # for i in range(len(full_texts)):
-    #     prompt_length = prompt_encodings["input_ids"][i].ne(tokenizer.pad_token_id).sum()
-    #     # Set all tokens up to prompt_length to -100 so loss isn't computed on them
-    #     labels[i, :prompt_length] = -100
+    # For each sample, set label tokens corresponding to the prompt to -100.
+    for i in range(len(full_texts)):
+        prompt_length = prompt_encodings["input_ids"][i].ne(tokenizer.pad_token_id).sum()
+        # Set all tokens up to prompt_length to -100 so loss isn't computed on them
+        labels[i, :prompt_length] = -100
     labels[encodings["attention_mask"] == 0] = -100
     encodings["labels"] = labels
     return encodings
@@ -665,6 +665,8 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
     config.vocab_size = 32001
     config.pad_token_id = 32000
     config.use_cache = False  # if applicable for LLaMA; otherwise remove or adjust
+    config.attention_dropout = 0.2
+    config.hidden_dropout = 0.2
 
     # Create datasets and dataloaders
     train_dataset = GenericClassificationDataset(train_json_path, tokenizer, label_mapping, dataset_prompt)
@@ -695,7 +697,7 @@ def train_svd_model(fine_tune_dataset=FINE_TUNE_DATASET, starting_checkpoint=STA
     model = model.to(device, dtype=torch.bfloat16)
     model.gradient_checkpointing_enable()
 
-    optimizer = optim.AdamW(model.parameters(), lr=1e-5)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-5, betas=(0.9, 0.999), weight_decay=0.01)
     num_epochs = 1  # adjust as needed
 
     model.train()
@@ -771,13 +773,19 @@ def evaluate_on_all_tasks(model_checkpoint, dataset_infos):
     task defined in `dataset_infos` using generation-based evaluation.
     Prints the accuracy for each task and the overall average accuracy.
     """
-    model_name = "baffo32/decapoda-research-llama-7B-hf"
+    model_name = "meta-llama/Llama-2-7b-hf"
     tokenizer = LlamaTokenizer.from_pretrained(model_name)
+    tokenizer.add_special_tokens({'pad_token': '[PAD]'})
     config = LlamaConfig.from_pretrained(model_name)
-    config.use_cache = False  # disable cache for training/generation
+    config.vocab_size = 32001
+    config.pad_token_id = 32000
+    config.attention_dropout = 0.2
+    config.hidden_dropout = 0.2
+    config.use_cache = False  # if applicable for LLaMA; otherwise remove or adjust
 
     # Load the trained model in bfloat16 on GPU 0
     model = LlamaWithSVD(config, svd_config={}, initialize_svd=False)
+    model.resize_token_embeddings(len(tokenizer))
     model.load_state_dict(torch.load(model_checkpoint, map_location=device), strict=False)
     model.reinitialize_svd()
     model = model.to(device, dtype=torch.bfloat16)
@@ -800,15 +808,13 @@ def evaluate_on_all_tasks(model_checkpoint, dataset_infos):
         eval_dataset = GenericClassificationDataset(json_path, tokenizer, label_mapping, task_name.lower())
 
         correct, total = 0, 0
-        sample_count = 0
         for prompt, tgt in tqdm(eval_dataset, desc=f"Evaluating {task_name}"):
             # Generate answer using only the prompt
-            generated_answer = generate_answer(model, tokenizer, prompt, max_new_tokens=16)
+            generated_answer = generate_answer(model, tokenizer, prompt)
             if generated_answer.strip().lower() == tgt.strip().lower():
                 correct += 1
-            if sample_count < 5:
-                print(f"[Target: {tgt.strip()} | Prediction: {generated_answer.strip()}]")
-                sample_count += 1
+            with open("output.txt", "a") as f:  # "a" mode appends to the file
+                print(f"[Target: {tgt.strip().lower()} | Prediction: {generated_answer.strip().lower()}]", file=f)
             total += 1
 
         acc = correct / total if total > 0 else 0
@@ -824,34 +830,36 @@ def evaluate_on_all_tasks(model_checkpoint, dataset_infos):
 ###################################################
 if __name__ == "__main__":
 
-    # Train the model and save it
-    model, tokenizer, train_dataset, test_dataset = train_svd_model(
-        fine_tune_dataset=FINE_TUNE_DATASET,
-        starting_checkpoint=STARTING_CHECKPOINT,
-        output_model_name=OUTPUT_MODEL_NAME
-    )
+    # # Train the model and save it
+    # model, tokenizer, train_dataset, test_dataset = train_svd_model(
+    #     fine_tune_dataset=FINE_TUNE_DATASET,
+    #     starting_checkpoint=STARTING_CHECKPOINT,
+    #     output_model_name=OUTPUT_MODEL_NAME
+    # )
 
-    # Reload the saved model for evaluation (exactly the same as training)
-    model_name = "meta-llama/Llama-2-7b-hf"
-    tokenizer = LlamaTokenizer.from_pretrained(model_name)
-    tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-    config = LlamaConfig.from_pretrained(model_name)
-    config.vocab_size = 32001
-    config.pad_token_id = 32000
+    # # Reload the saved model for evaluation (exactly the same as training)
+    # model_name = "meta-llama/Llama-2-7b-hf"
+    # tokenizer = LlamaTokenizer.from_pretrained(model_name)
+    # tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+    # config = LlamaConfig.from_pretrained(model_name)
+    # config.vocab_size = 32001
+    # config.pad_token_id = 32000
+    # config.attention_dropout = 0.2
+    # config.hidden_dropout = 0.2
 
-    # Initialize the model with the same SVD config used in training
-    model = LlamaWithSVD(config, svd_config={}, initialize_svd=False)
-    model.resize_token_embeddings(len(tokenizer))
-    model.load_state_dict(torch.load(OUTPUT_MODEL_NAME, map_location=device), strict=False)
-    model.reinitialize_svd()
-    model = model.to(device, dtype=torch.bfloat16)
-    model.gradient_checkpointing_enable()
-    model.eval()
+    # # Initialize the model with the same SVD config used in training
+    # model = LlamaWithSVD(config, svd_config={}, initialize_svd=False)
+    # model.resize_token_embeddings(len(tokenizer))
+    # model.load_state_dict(torch.load(OUTPUT_MODEL_NAME, map_location=device), strict=False)
+    # model.reinitialize_svd()
+    # model = model.to(device, dtype=torch.bfloat16)
+    # model.gradient_checkpointing_enable()
+    # model.eval()
     
-    print(f"Loaded saved model from '{OUTPUT_MODEL_NAME}' for evaluation.")
+    # print(f"Loaded saved model from '{OUTPUT_MODEL_NAME}' for evaluation.")
 
-    # Evaluate on both Train and Test sets
-    # evaluate(model, tokenizer, train_dataset, dataset_name="Train")
-    evaluate(model, tokenizer, test_dataset, dataset_name="Test")
+    # # Evaluate on both Train and Test sets
+    # # evaluate(model, tokenizer, train_dataset, dataset_name="Train")
+    # evaluate(model, tokenizer, test_dataset, dataset_name="Test")
 
-    # evaluate_on_all_tasks(OUTPUT_MODEL_NAME, DATASET_INFOS)
+    evaluate_on_all_tasks(OUTPUT_MODEL_NAME, DATASET_INFOS)
