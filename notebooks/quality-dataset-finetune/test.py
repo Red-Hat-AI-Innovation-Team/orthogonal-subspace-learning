@@ -38,12 +38,14 @@ def collate_fn(batch, tokenizer, max_length=2048):
         tokenizer.apply_chat_template(sample, tokenize=False, add_generation_prompt=False)
         for sample in batch
     ]
-    encodings = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True, max_length=max_length)
+    encodings = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True, max_length=max_length, add_special_tokens=False)
 
     labels = encodings["input_ids"].clone()
 
     # Mask only special tokens (e.g., <|endoftext|>, etc.)
     for special_token_id in tokenizer.all_special_ids:
+        if special_token_id == 128009:
+            continue
         labels[labels == special_token_id] = -100
     
     special_token_ids = [
@@ -63,12 +65,17 @@ def collate_fn(batch, tokenizer, max_length=2048):
 def load_model():
     model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
+    # ✅ Add a new pad token if not already present
+    if tokenizer.pad_token is None:
+        tokenizer.add_special_tokens({'pad_token': '[PAD]'})
     config = LlamaConfig.from_pretrained(model_name)
     config.attention_dropout = 0.2
     config.hidden_dropout = 0.2
 
     # Load model with BF16 and enable gradient checkpointing for memory savings
     model = AutoModelForCausalLM.from_pretrained(model_name, config=config, torch_dtype=torch.bfloat16)
+    # ✅ Resize embeddings to account for new token
+    model.resize_token_embeddings(len(tokenizer))
     model.gradient_checkpointing_enable()  # Save memory during backpropagation
     model.to("cuda:0")  # Force model to GPU 0
     return model, tokenizer
@@ -79,11 +86,15 @@ def load_finetuned_model(model_path="llama_finetuned_dbpedia.pt"):
     """
     model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
+    # ✅ Add a new pad token if not already present
+    if tokenizer.pad_token is None:
+        tokenizer.add_special_tokens({'pad_token': '[PAD]'})
     config = LlamaConfig.from_pretrained(model_name)
     config.attention_dropout = 0.2
     config.hidden_dropout = 0.2
 
     model = AutoModelForCausalLM.from_pretrained(model_name, config=config)
+    model.resize_token_embeddings(len(tokenizer))
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.gradient_checkpointing_enable()  # Enable checkpointing here too
     model.to("cuda:0")  # Force model to GPU 0
