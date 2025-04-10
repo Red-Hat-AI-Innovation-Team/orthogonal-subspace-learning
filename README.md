@@ -28,7 +28,7 @@ Key contributions:
   notebooks for finetuning T5, LLaMA-2, and LLaMA-3.1 on continual learning tasks using Adaptive SVD.
   
 - `/llama-auto-gpu-code/` and `/llama-single-gpu-code/`:  
-  Training scripts and configs for full fine-tuning LLaMA-2 7B and 3.1 8B models with SVD projection.
+  Training scripts and configs for full fine-tuning LLaMA-2 7B and 3.1 8B models with SVD and projected gradient descent on multiple GPUs and single GPU respectively.
 
 - `/plotting_code/`:  
   Scripts to reproduce experiment plots from the paper and blog post.
@@ -46,8 +46,8 @@ Key contributions:
 
 ## 🧪 Running Experiments
 
-Example: Fine-tune a T5-large model on a 5-task continual learning sequence:
+Example: Fine-tune a T5-large model on 15-task continual learning benchmark sequence:
 
 ```bash
-cd llama-single-gpu-code
+cd notebooks
 bash run_finetuning.sh
